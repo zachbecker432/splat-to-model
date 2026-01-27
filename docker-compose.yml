@@ -1,0 +1,11 @@
+services:
+  splat-to-mesh:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      # Mount your local data folder to /data in the container
+      # Place input files in ./data/input, outputs go to ./data/output
+      - ./data:/data
+    # Override command to run your specific conversion
+    # Example: convert input/model.ply to output/mesh.obj
+    command: ["input/model.ply", "output/mesh.obj"]
