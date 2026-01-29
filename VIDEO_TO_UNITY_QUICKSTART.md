@@ -310,9 +310,57 @@ For the roughest draft, you can skip Blender entirely and import vertex-colored 
 
 ## Stage 6: Unity Import
 
-### Import Process
+### Option A: PLY Import with Custom Importer (Recommended)
 
-1. **Drag and drop** the .obj or .fbx file into Unity's Project window
+**Why PLY?** OBJ format doesn't properly support vertex colors. PLY format does, and our custom importer handles it correctly.
+
+#### Setup (One Time)
+
+1. Copy the `unity/PlyImporter` folder from this repository into your Unity project:
+   ```
+   YourUnityProject/
+     Assets/
+       PlyImporter/
+         PlyImporter.cs
+         Editor/
+           PlyImporterEditor.cs
+         Shaders/
+           VertexColor.shader
+           VertexColorUnlit.shader
+           VertexColorURP.shader
+   ```
+
+2. Unity will compile the scripts automatically.
+
+#### Import Process
+
+1. **Export your mesh as PLY** (not OBJ):
+   ```bash
+   python run_pipeline.py input.ply output.ply
+   ```
+
+2. **Drag and drop** the `.ply` file into Unity's Project window
+   - The importer automatically creates a mesh with vertex colors
+   - A vertex color material is assigned automatically
+   - A prefab is created ready to use
+
+3. **Drag the prefab into your Scene**
+
+#### Import Settings
+
+Click on the imported PLY asset to adjust:
+
+| Setting | Description |
+|---------|-------------|
+| Swap YZ | Toggle if model appears rotated (coordinate system conversion) |
+| Scale | Adjust mesh scale (default: 1) |
+| Recalculate Normals | Force Unity to recalculate normals |
+
+### Option B: OBJ Import (Vertex Colors May Not Work)
+
+If you must use OBJ format:
+
+1. **Drag and drop** the `.obj` file into Unity's Project window
 2. **Configure Import Settings** (click on imported model):
 
 | Setting | Value |
@@ -324,74 +372,28 @@ For the roughest draft, you can skip Blender entirely and import vertex-colored 
 
 3. **Drag model into Scene**
 
-### Setting Up Materials
+**Note:** OBJ format has no standard vertex color support. The mesh will likely appear white unless you bake colors to a texture.
 
-#### For Vertex Colors (No Texture):
+### Vertex Color Shaders
 
-Create a shader that displays vertex colors:
+The PLY importer includes these shaders:
 
-1. Create new material
-2. If using URP/HDRP:
-   - Create Shader Graph with Vertex Color node
-3. If using Built-in:
-   - Use `Particles/Standard Unlit` shader (shows vertex colors)
-   - Or create simple vertex color shader:
+| Shader | Use Case |
+|--------|----------|
+| `Custom/VertexColor` | Built-in RP with basic lighting |
+| `Custom/VertexColorUnlit` | No lighting, raw vertex colors |
+| `Custom/VertexColorURP` | Universal Render Pipeline |
 
-```hlsl
-Shader "Custom/VertexColor"
-{
-    SubShader
-    {
-        Tags { "RenderType"="Opaque" }
-        LOD 100
-
-        Pass
-        {
-            CGPROGRAM
-            #pragma vertex vert
-            #pragma fragment frag
-            #include "UnityCG.cginc"
-
-            struct appdata
-            {
-                float4 vertex : POSITION;
-                float4 color : COLOR;
-            };
-
-            struct v2f
-            {
-                float4 vertex : SV_POSITION;
-                float4 color : COLOR;
-            };
-
-            v2f vert (appdata v)
-            {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.color = v.color;
-                return o;
-            }
-
-            fixed4 frag (v2f i) : SV_Target
-            {
-                return i.color;
-            }
-            ENDCG
-        }
-    }
-}
-```
-
-#### For Textured Models:
-
-1. Assign texture to material's Albedo/Base Map slot
-2. Configure other material properties as needed
+To manually assign:
+1. Select your mesh in the scene
+2. In the Inspector, find the Material
+3. Change the shader to one of the above
 
 ### Quick Validation Checklist
 
 - [ ] Model appears in scene at reasonable scale
 - [ ] Model is not inside-out (normals correct)
-- [ ] Colors/textures display correctly
+- [ ] Vertex colors display correctly (not white!)
 - [ ] Model is at origin or expected position
 - [ ] No obvious mesh artifacts
 

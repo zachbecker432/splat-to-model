@@ -3,6 +3,9 @@
 
 FROM python:3.10-slim
 
+# Disable Python output buffering for real-time logs in Docker
+ENV PYTHONUNBUFFERED=1
+
 # Install system dependencies required by Open3D
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
