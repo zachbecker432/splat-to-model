@@ -1,48 +1,23 @@
 services:
-  # Original pipeline (basic Poisson reconstruction)
   splat-to-mesh:
     build: .
     image: splat-to-mesh:latest
     volumes:
-      # Mount your local data folder to /data in the container
-      # Place input files in ./data/input, outputs go to ./data/output
       - ./data:/data
-    # Override command to run your specific conversion
-    command: ["input/model.ply", "output/mesh.obj"]
+    command: ["model.ply", "mesh.ply"]
 
-  # IMPROVED pipeline - INTERIOR preset (default, tuned for buildings)
-  # Uses your best settings: depth=11, opacity=0.4, no downsampling
-  splat-to-mesh-improved:
+  # High quality preset
+  splat-to-mesh-high:
     build: .
     image: splat-to-mesh:latest
     volumes:
       - ./data:/data
-    entrypoint: ["python", "/app/run_pipeline_improved.py"]
-    command: ["--preset", "interior", "input/model.ply", "output/mesh_improved.obj"]
+    command: ["--depth", "10", "--opacity", "0.2", "model.ply", "mesh_high.ply"]
 
-  # INTERIOR preset - specifically for building interiors (same as improved default)
-  splat-to-mesh-interior:
+  # Mobile-optimized preset (fewer triangles)
+  splat-to-mesh-mobile:
     build: .
     image: splat-to-mesh:latest
     volumes:
       - ./data:/data
-    entrypoint: ["python", "/app/run_pipeline_improved.py"]
-    command: ["--preset", "interior", "input/model.ply", "output/mesh_interior.obj"]
-
-  # Try PLANE DETECTION for sharper walls (experimental)
-  splat-to-mesh-planes:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    entrypoint: ["python", "/app/run_pipeline_improved.py"]
-    command: ["--preset", "interior", "--use-planes", "input/model.ply", "output/mesh_planes.obj"]
-
-  # EXPERIMENTAL preset - all new features enabled (use with caution)
-  splat-to-mesh-experimental:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    entrypoint: ["python", "/app/run_pipeline_improved.py"]
-    command: ["--preset", "experimental", "input/model.ply", "output/mesh_experimental.obj"]
+    command: ["--depth", "8", "--opacity", "0.3", "--simplify", "50000", "model.ply", "mesh_mobile.ply"]
