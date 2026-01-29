@@ -10,12 +10,45 @@ Usage:
 
 import argparse
 import sys
-import tempfile
+import time
 from pathlib import Path
+from datetime import datetime
 
 # Import the pipeline modules
 from splat_to_pointcloud import splat_to_pointcloud
 from pointcloud_to_mesh import pointcloud_to_mesh
+
+
+def format_time(seconds):
+    """Format seconds into human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        mins = int(seconds // 60)
+        secs = seconds % 60
+        return f"{mins}m {secs:.1f}s"
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins}m"
+
+
+def format_size(path):
+    """Format file size in human-readable format."""
+    size = Path(path).stat().st_size
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def log_header(title):
+    """Print a formatted header."""
+    print()
+    print("=" * 70)
+    print(f"  {title}")
+    print("=" * 70)
 
 
 def run_pipeline(
@@ -26,6 +59,7 @@ def run_pipeline(
     density_threshold=0.01,
     voxel_size=None,
     target_triangles=None,
+    outlier_std_ratio=2.0,
     keep_intermediate=False,
     intermediate_dir=None,
     verbose=True
@@ -41,6 +75,7 @@ def run_pipeline(
         density_threshold: Percentile of low-density vertices to remove
         voxel_size: Voxel size for point cloud downsampling
         target_triangles: Target triangle count for mesh simplification
+        outlier_std_ratio: Std ratio for outlier removal (lower = more aggressive)
         keep_intermediate: Keep intermediate point cloud file
         intermediate_dir: Directory for intermediate files (default: same as output)
         verbose: Print progress information
@@ -48,12 +83,13 @@ def run_pipeline(
     Returns:
         Path to output mesh if successful, None otherwise
     """
+    pipeline_start = time.time()
     input_path = Path(input_splat)
     output_path = Path(output_mesh)
     
     # Validate input
     if not input_path.exists():
-        print(f"ERROR: Input file not found: {input_splat}")
+        print(f"[ERROR] Input file not found: {input_splat}")
         return None
     
     # Determine intermediate file location
@@ -68,38 +104,56 @@ def run_pipeline(
     pointcloud_path = intermediate_path / f"{input_path.stem}_pointcloud.ply"
     
     if verbose:
-        print("=" * 60)
-        print("SPLAT TO MESH PIPELINE")
-        print("=" * 60)
-        print(f"Input:  {input_splat}")
-        print(f"Output: {output_mesh}")
-        print("=" * 60)
+        log_header("SPLAT TO MESH PIPELINE")
+        print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+        print("  INPUT/OUTPUT:")
+        print(f"    Input file:  {input_splat}")
+        print(f"    Input size:  {format_size(input_path)}")
+        print(f"    Output file: {output_mesh}")
+        print()
+        print("  PARAMETERS:")
+        print(f"    Opacity threshold:    {opacity_threshold}")
+        print(f"    Poisson depth:        {poisson_depth}")
+        print(f"    Density threshold:    {density_threshold}")
+        print(f"    Voxel size:           {voxel_size if voxel_size else 'auto'}")
+        print(f"    Target triangles:     {target_triangles if target_triangles else 'none'}")
+        print(f"    Outlier std ratio:    {outlier_std_ratio}")
+        print(f"    Keep intermediate:    {keep_intermediate}")
+        print("=" * 70)
         print()
     
     # Stage 1: Extract point cloud from splat
     if verbose:
-        print("STAGE 1: Extracting point cloud from Gaussian Splat")
-        print("-" * 60)
+        log_header("STAGE 1: Point Cloud Extraction")
+        print()
     
+    stage1_start = time.time()
     num_points = splat_to_pointcloud(
         str(input_path),
         str(pointcloud_path),
         opacity_threshold=opacity_threshold,
         verbose=verbose
     )
+    stage1_time = time.time() - stage1_start
     
     if num_points == 0:
-        print("ERROR: No points extracted from splat file")
+        print("[ERROR] No points extracted from splat file")
+        print("[HINT] Try lowering --opacity threshold (e.g., --opacity 0.1)")
         return None
     
     if verbose:
         print()
+        print(f"  [STAGE 1 COMPLETE] Extracted {num_points:,} points in {format_time(stage1_time)}")
+        if pointcloud_path.exists():
+            print(f"  [STAGE 1 OUTPUT] Point cloud size: {format_size(pointcloud_path)}")
     
     # Stage 2: Convert point cloud to mesh
     if verbose:
-        print("STAGE 2: Converting point cloud to mesh")
-        print("-" * 60)
+        log_header("STAGE 2: Mesh Generation")
+        print()
     
+    stage2_start = time.time()
     result = pointcloud_to_mesh(
         str(pointcloud_path),
         str(output_path),
@@ -107,26 +161,55 @@ def run_pipeline(
         density_threshold=density_threshold,
         voxel_size=voxel_size,
         target_triangles=target_triangles,
+        outlier_std_ratio=outlier_std_ratio,
         verbose=verbose
     )
+    stage2_time = time.time() - stage2_start
+    
+    if verbose and result:
+        print()
+        print(f"  [STAGE 2 COMPLETE] Generated mesh in {format_time(stage2_time)}")
+        if output_path.exists():
+            print(f"  [STAGE 2 OUTPUT] Mesh size: {format_size(output_path)}")
     
     # Clean up intermediate file unless requested to keep
     if not keep_intermediate and pointcloud_path.exists():
         pointcloud_path.unlink()
         if verbose:
-            print(f"\nRemoved intermediate file: {pointcloud_path}")
+            print(f"\n  [CLEANUP] Removed intermediate file: {pointcloud_path}")
     elif keep_intermediate and verbose:
-        print(f"\nKept intermediate file: {pointcloud_path}")
+        print(f"\n  [KEPT] Intermediate file: {pointcloud_path}")
+    
+    pipeline_time = time.time() - pipeline_start
     
     if verbose:
-        print()
-        print("=" * 60)
+        log_header("PIPELINE SUMMARY")
         if result:
-            print("PIPELINE COMPLETE")
-            print(f"Output mesh: {output_mesh}")
+            print()
+            print(f"  STATUS:     SUCCESS")
+            print(f"  OUTPUT:     {output_mesh}")
+            if output_path.exists():
+                print(f"  FILE SIZE:  {format_size(output_path)}")
+            print()
+            print(f"  TIMING:")
+            print(f"    Stage 1 (extraction): {format_time(stage1_time)}")
+            print(f"    Stage 2 (meshing):    {format_time(stage2_time)}")
+            print(f"    Total:                {format_time(pipeline_time)}")
+            print()
+            print("  NEXT STEPS:")
+            print("    1. Import the .obj file into Unity")
+            print("    2. Create a material with vertex color shader")
+            print("    3. Apply material to mesh")
         else:
-            print("PIPELINE FAILED")
-        print("=" * 60)
+            print()
+            print(f"  STATUS: FAILED")
+            print()
+            print("  TROUBLESHOOTING:")
+            print("    - Check the error messages above")
+            print("    - Try --opacity 0.1 to extract more points")
+            print("    - Use --keep-intermediate to inspect point cloud")
+        print()
+        print("=" * 70)
     
     return result
 
@@ -187,13 +270,19 @@ Quality Presets:
         "--voxel-size", "-v",
         type=float,
         default=None,
-        help="Voxel size for point cloud downsampling (default: none)"
+        help="Voxel size for point cloud downsampling (default: auto)"
     )
     mesh_group.add_argument(
         "--simplify", "-s",
         type=int,
         default=None,
         help="Target number of triangles (default: no simplification)"
+    )
+    mesh_group.add_argument(
+        "--outlier-std", "-r",
+        type=float,
+        default=2.0,
+        help="Outlier removal std ratio - lower=more aggressive (default: 2.0)"
     )
     
     # Output options
@@ -225,6 +314,7 @@ Quality Presets:
         density_threshold=args.density_threshold,
         voxel_size=args.voxel_size,
         target_triangles=args.simplify,
+        outlier_std_ratio=args.outlier_std,
         keep_intermediate=args.keep_intermediate,
         intermediate_dir=args.intermediate_dir,
         verbose=not args.quiet

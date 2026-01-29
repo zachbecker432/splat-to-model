@@ -18,17 +18,32 @@
 .PARAMETER Opacity
     Minimum opacity threshold (0-1, default: 0.3)
 
+.PARAMETER DensityThreshold
+    Percentile of low-density vertices to remove (0-1, default: 0.01)
+
+.PARAMETER OutlierStd
+    Standard deviation ratio for outlier removal - lower is more aggressive (default: 2.0)
+
 .PARAMETER Simplify
     Target number of triangles (optional)
 
 .PARAMETER Build
     Force rebuild the Docker image
 
+.PARAMETER Inspect
+    Just inspect the PLY file structure without converting (useful for debugging)
+
 .EXAMPLE
-    .\docker-run.ps1 -InputFile .\splats\model.ply -OutputFile .\meshes\output.obj
+    .\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj
+
+.EXAMPLE
+    .\docker-run.ps1 -InputFile .\model.ply -Inspect
 
 .EXAMPLE
     .\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj -Depth 10 -Opacity 0.2
+
+.EXAMPLE
+    .\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj -Opacity 0.5 -DensityThreshold 0.05
 
 .EXAMPLE
     .\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj -Simplify 50000
@@ -45,11 +60,17 @@ param(
     
     [double]$Opacity = 0.3,
     
+    [double]$DensityThreshold = 0.01,
+    
+    [double]$OutlierStd = 2.0,
+    
     [int]$Simplify = 0,
     
     [switch]$Build,
     
-    [switch]$KeepIntermediate
+    [switch]$KeepIntermediate,
+    
+    [switch]$Inspect
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,6 +119,22 @@ if ($Build -or -not $imageExists) {
     Write-Host ""
 }
 
+# Handle inspect mode separately
+if ($Inspect) {
+    Write-Host "Inspecting PLY file structure..." -ForegroundColor Yellow
+    $dockerArgs = @(
+        "run", "--rm",
+        "-v", "${InputDir}:/data/input:ro",
+        "--entrypoint", "python",
+        $ImageName,
+        "/app/splat_to_pointcloud.py",
+        "/data/input/$InputName",
+        "--inspect"
+    )
+    & docker $dockerArgs
+    exit $LASTEXITCODE
+}
+
 # Build command arguments
 $dockerArgs = @(
     "run", "--rm",
@@ -107,7 +144,9 @@ $dockerArgs = @(
     "/data/input/$InputName",
     "/data/output/$OutputName",
     "--depth", $Depth,
-    "--opacity", $Opacity
+    "--opacity", $Opacity,
+    "--density-threshold", $DensityThreshold,
+    "--outlier-std", $OutlierStd
 )
 
 if ($Simplify -gt 0) {

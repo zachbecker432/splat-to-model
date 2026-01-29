@@ -5,7 +5,8 @@ FROM python:3.10-slim
 
 # Install system dependencies required by Open3D
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
+    libglx-mesa0 \
     libglib2.0-0 \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
