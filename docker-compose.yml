@@ -1,4 +1,5 @@
 services:
+  # Original pipeline (basic Poisson reconstruction)
   splat-to-mesh:
     build: .
     image: splat-to-mesh:latest
@@ -7,5 +8,41 @@ services:
       # Place input files in ./data/input, outputs go to ./data/output
       - ./data:/data
     # Override command to run your specific conversion
-    # Example: convert input/model.ply to output/mesh.obj
     command: ["input/model.ply", "output/mesh.obj"]
+
+  # IMPROVED pipeline - INTERIOR preset (default, tuned for buildings)
+  # Uses your best settings: depth=11, opacity=0.4, no downsampling
+  splat-to-mesh-improved:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "/app/run_pipeline_improved.py"]
+    command: ["--preset", "interior", "input/model.ply", "output/mesh_improved.obj"]
+
+  # INTERIOR preset - specifically for building interiors (same as improved default)
+  splat-to-mesh-interior:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "/app/run_pipeline_improved.py"]
+    command: ["--preset", "interior", "input/model.ply", "output/mesh_interior.obj"]
+
+  # Try PLANE DETECTION for sharper walls (experimental)
+  splat-to-mesh-planes:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "/app/run_pipeline_improved.py"]
+    command: ["--preset", "interior", "--use-planes", "input/model.ply", "output/mesh_planes.obj"]
+
+  # EXPERIMENTAL preset - all new features enabled (use with caution)
+  splat-to-mesh-experimental:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "/app/run_pipeline_improved.py"]
+    command: ["--preset", "experimental", "input/model.ply", "output/mesh_experimental.obj"]

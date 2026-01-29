@@ -29,57 +29,78 @@ from pointcloud_to_mesh_improved import pointcloud_to_mesh_improved
 
 
 # Quality presets
+# NOTE: Filtering is now much more conservative to avoid removing valid geometry
 PRESETS = {
     'fast': {
-        'opacity_threshold': 0.6,
-        'use_scale_filter': True,
-        'scale_percentile_low': 10,
-        'scale_percentile_high': 90,
+        'opacity_threshold': 0.5,
+        'use_scale_filter': False,  # Disabled - was too aggressive
         'use_density_filter': False,
-        'use_color_filter': True,
+        'use_color_filter': False,
         'method': 'poisson',
-        'poisson_depth': 8,
+        'poisson_depth': 9,
         'use_planes': False,
         'aggressive_outlier': False,
+        'voxel_size': None,  # No downsampling
     },
     'balanced': {
-        'opacity_threshold': 0.5,
-        'use_scale_filter': True,
-        'scale_percentile_low': 5,
-        'scale_percentile_high': 95,
-        'use_density_filter': True,
-        'density_std_ratio': 2.5,
-        'use_color_filter': True,
-        'method': 'hybrid',
-        'poisson_depth': 9,
-        'use_planes': True,
-        'aggressive_outlier': True,
+        'opacity_threshold': 0.4,
+        'use_scale_filter': False,  # Disabled for safety
+        'use_density_filter': False,
+        'use_color_filter': False,
+        'method': 'poisson',  # Stick with proven Poisson
+        'poisson_depth': 10,
+        'use_planes': False,  # Plane detection can help but needs tuning
+        'aggressive_outlier': False,  # Use standard outlier removal
+        'voxel_size': None,
     },
     'quality': {
         'opacity_threshold': 0.4,
-        'use_scale_filter': True,
-        'scale_percentile_low': 3,
-        'scale_percentile_high': 97,
-        'use_density_filter': True,
-        'density_std_ratio': 2.0,
-        'use_color_filter': True,
-        'method': 'hybrid',
-        'poisson_depth': 10,
-        'use_planes': True,
-        'aggressive_outlier': True,
+        'use_scale_filter': False,
+        'use_density_filter': False,
+        'use_color_filter': False,
+        'method': 'poisson',
+        'poisson_depth': 11,
+        'use_planes': False,
+        'aggressive_outlier': False,
+        'voxel_size': None,
     },
     'ultra': {
-        'opacity_threshold': 0.3,
+        'opacity_threshold': 0.4,
+        'use_scale_filter': False,
+        'use_density_filter': False,
+        'use_color_filter': False,
+        'method': 'poisson',
+        'poisson_depth': 11,
+        'use_planes': False,
+        'aggressive_outlier': False,
+        'voxel_size': None,
+    },
+    # INTERIOR preset - specifically tuned for building interiors
+    # Based on your best settings: voxel_size=None, depth=11, opacity=0.4
+    'interior': {
+        'opacity_threshold': 0.4,
+        'use_scale_filter': False,
+        'use_density_filter': False,
+        'use_color_filter': False,
+        'method': 'poisson',
+        'poisson_depth': 11,
+        'use_planes': False,  # Can enable with --use-planes if walls need sharpening
+        'aggressive_outlier': False,
+        'voxel_size': None,
+    },
+    # EXPERIMENTAL preset - tries the new features (use with caution)
+    'experimental': {
+        'opacity_threshold': 0.4,
         'use_scale_filter': True,
-        'scale_percentile_low': 2,
-        'scale_percentile_high': 98,
-        'use_density_filter': True,
-        'density_std_ratio': 1.5,
-        'use_color_filter': True,
+        'scale_percentile_low': 1,  # Very conservative
+        'scale_percentile_high': 99,
+        'use_density_filter': False,  # Still too risky
+        'use_color_filter': False,
         'method': 'hybrid',
         'poisson_depth': 11,
         'use_planes': True,
         'aggressive_outlier': True,
+        'voxel_size': None,
     },
 }
 
@@ -302,27 +323,31 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Quality Presets:
-  fast      : Quick processing, basic filtering
-  balanced  : Good balance of speed and quality (default)
-  quality   : Higher quality, more aggressive filtering
-  ultra     : Maximum quality, slowest processing
+  interior     : Tuned for building interiors (default) - your best settings
+  fast         : Quick processing, depth 9
+  balanced     : Good balance, depth 10
+  quality      : High quality, depth 11
+  ultra        : Same as quality (conservative)
+  experimental : Tries new features (plane detection, filtering) - USE WITH CAUTION
 
 Examples:
-  # Basic usage with balanced preset
+  # Interior building (recommended for your use case)
+  python run_pipeline_improved.py model.ply mesh.obj --preset interior
+
+  # Same as your best settings: depth=11, opacity=0.4, no downsampling
   python run_pipeline_improved.py model.ply mesh.obj
 
-  # Maximum quality
-  python run_pipeline_improved.py model.ply mesh.obj --preset ultra
+  # Try plane detection for sharper walls (experimental)
+  python run_pipeline_improved.py model.ply mesh.obj --use-planes
 
-  # Quick preview
-  python run_pipeline_improved.py model.ply mesh.obj --preset fast
+  # Custom opacity
+  python run_pipeline_improved.py model.ply mesh.obj --opacity 0.3
 
-  # Custom settings (override preset)
-  python run_pipeline_improved.py model.ply mesh.obj --preset quality --depth 11
+  # Lower depth for faster processing
+  python run_pipeline_improved.py model.ply mesh.obj --depth 9
 
-Comparison with original pipeline:
-  Original: run_pipeline.py (Poisson only, basic filtering)
-  Improved: run_pipeline_improved.py (hybrid meshing, aggressive filtering)
+Note: The experimental filters (scale, density) are DISABLED by default
+because they can remove valid geometry in large interior spaces.
         """
     )
     
@@ -332,9 +357,9 @@ Comparison with original pipeline:
     # Preset
     parser.add_argument(
         "--preset", "-p",
-        choices=['fast', 'balanced', 'quality', 'ultra'],
-        default='balanced',
-        help="Quality preset (default: balanced)"
+        choices=['fast', 'balanced', 'quality', 'ultra', 'interior', 'experimental'],
+        default='interior',
+        help="Quality preset (default: interior - tuned for building interiors)"
     )
     
     # Override options
@@ -355,9 +380,19 @@ Comparison with original pipeline:
         help="Override meshing method"
     )
     override_group.add_argument(
+        "--use-planes",
+        action="store_true",
+        help="Enable RANSAC plane detection (for sharper walls)"
+    )
+    override_group.add_argument(
         "--no-planes",
         action="store_true",
         help="Disable plane detection"
+    )
+    override_group.add_argument(
+        "--use-scale-filter",
+        action="store_true",
+        help="Enable scale filtering (experimental)"
     )
     override_group.add_argument(
         "--no-scale-filter",
@@ -365,9 +400,19 @@ Comparison with original pipeline:
         help="Disable scale filtering"
     )
     override_group.add_argument(
+        "--use-density-filter",
+        action="store_true",
+        help="Enable density filtering (experimental, can remove valid points)"
+    )
+    override_group.add_argument(
         "--no-density-filter",
         action="store_true",
         help="Disable density filtering"
+    )
+    override_group.add_argument(
+        "--aggressive-outlier",
+        action="store_true",
+        help="Enable aggressive multi-stage outlier removal"
     )
     
     # Output options
@@ -399,12 +444,24 @@ Comparison with original pipeline:
         overrides['poisson_depth'] = args.depth
     if args.method is not None:
         overrides['method'] = args.method
+    # Plane detection
+    if args.use_planes:
+        overrides['use_planes'] = True
     if args.no_planes:
         overrides['use_planes'] = False
+    # Scale filter
+    if args.use_scale_filter:
+        overrides['use_scale_filter'] = True
     if args.no_scale_filter:
         overrides['use_scale_filter'] = False
+    # Density filter
+    if args.use_density_filter:
+        overrides['use_density_filter'] = True
     if args.no_density_filter:
         overrides['use_density_filter'] = False
+    # Aggressive outlier
+    if args.aggressive_outlier:
+        overrides['aggressive_outlier'] = True
     
     result = run_pipeline_improved(
         args.input,

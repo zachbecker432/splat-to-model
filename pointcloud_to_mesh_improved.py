@@ -377,13 +377,50 @@ def poisson_reconstruction_improved(pcd, depth=10, verbose=True):
     return mesh, np.asarray(densities)
 
 
-def clean_mesh_aggressive(mesh, densities=None, density_percentile=0.05, verbose=True):
+def clean_mesh_standard(mesh, densities=None, density_percentile=0.01, verbose=True):
     """
-    Aggressive mesh cleaning to remove Poisson artifacts.
+    Standard mesh cleaning - conservative, preserves more geometry.
     """
     if verbose:
         print("  " + "-" * 50)
-        print("  AGGRESSIVE MESH CLEANING")
+        print("  MESH CLEANING (Standard)")
+        print("  " + "-" * 50)
+        print(f"    Initial vertices:  {len(mesh.vertices):,}")
+        print(f"    Initial triangles: {len(mesh.triangles):,}")
+    
+    # Remove only very low-density vertices (bottom 1%)
+    if densities is not None and density_percentile > 0:
+        threshold = np.quantile(densities, density_percentile)
+        mask = densities < threshold
+        
+        if verbose:
+            print(f"    Removing {np.sum(mask):,} low-density vertices (bottom {density_percentile*100:.0f}%)...")
+        
+        mesh.remove_vertices_by_mask(mask)
+    
+    # Standard cleanup only - no component removal
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_duplicated_vertices()
+    mesh.remove_non_manifold_edges()
+    mesh.remove_unreferenced_vertices()
+    
+    if verbose:
+        print(f"    Final vertices:  {len(mesh.vertices):,}")
+        print(f"    Final triangles: {len(mesh.triangles):,}")
+        print()
+    
+    return mesh
+
+
+def clean_mesh_aggressive(mesh, densities=None, density_percentile=0.05, verbose=True):
+    """
+    Aggressive mesh cleaning to remove Poisson artifacts.
+    WARNING: Can remove valid geometry in large interior spaces!
+    """
+    if verbose:
+        print("  " + "-" * 50)
+        print("  MESH CLEANING (Aggressive)")
         print("  " + "-" * 50)
         print(f"    Initial vertices:  {len(mesh.vertices):,}")
         print(f"    Initial triangles: {len(mesh.triangles):,}")
@@ -467,7 +504,7 @@ def transfer_colors_to_mesh(mesh, pcd, verbose=True):
 
 
 def hybrid_reconstruction(pcd, use_planes=True, plane_min_ratio=0.03, 
-                         poisson_depth=10, verbose=True):
+                         poisson_depth=10, verbose=True, aggressive_clean=False):
     """
     Hybrid reconstruction: detect planes for sharp surfaces, use Poisson for the rest.
     
@@ -518,13 +555,21 @@ def hybrid_reconstruction(pcd, use_planes=True, plane_min_ratio=0.03,
             verbose=verbose
         )
         
-        # Clean the Poisson mesh
-        poisson_mesh = clean_mesh_aggressive(
-            poisson_mesh, 
-            densities, 
-            density_percentile=0.05,
-            verbose=verbose
-        )
+        # Clean the Poisson mesh (use standard or aggressive based on setting)
+        if aggressive_clean:
+            poisson_mesh = clean_mesh_aggressive(
+                poisson_mesh, 
+                densities, 
+                density_percentile=0.05,
+                verbose=verbose
+            )
+        else:
+            poisson_mesh = clean_mesh_standard(
+                poisson_mesh, 
+                densities, 
+                density_percentile=0.01,
+                verbose=verbose
+            )
         
         if len(poisson_mesh.triangles) > 0:
             # Transfer colors
@@ -562,10 +607,10 @@ def hybrid_reconstruction(pcd, use_planes=True, plane_min_ratio=0.03,
 def pointcloud_to_mesh_improved(
     input_path,
     output_path,
-    method='hybrid',  # 'hybrid', 'poisson', 'ball_pivoting'
-    poisson_depth=10,
-    use_planes=True,
-    aggressive_outlier=True,
+    method='poisson',  # 'hybrid', 'poisson', 'ball_pivoting'
+    poisson_depth=11,
+    use_planes=False,
+    aggressive_outlier=False,
     verbose=True
 ):
     """
@@ -574,10 +619,10 @@ def pointcloud_to_mesh_improved(
     Args:
         input_path: Path to input point cloud PLY
         output_path: Path to output mesh
-        method: 'hybrid' (recommended), 'poisson', or 'ball_pivoting'
-        poisson_depth: Octree depth for Poisson (8-11)
+        method: 'poisson' (default), 'hybrid', or 'ball_pivoting'
+        poisson_depth: Octree depth for Poisson (8-11, default: 11)
         use_planes: Enable RANSAC plane detection for sharp surfaces
-        aggressive_outlier: Use multi-stage outlier removal
+        aggressive_outlier: Use multi-stage outlier removal (can remove valid geometry!)
         verbose: Print progress
     """
     total_start = time.time()
@@ -587,6 +632,7 @@ def pointcloud_to_mesh_improved(
     print("  IMPROVED POINT CLOUD TO MESH PIPELINE")
     print("  " + "=" * 50)
     print(f"    Method: {method}")
+    print(f"    Poisson depth: {poisson_depth}")
     print(f"    Plane detection: {use_planes}")
     print(f"    Aggressive outlier removal: {aggressive_outlier}")
     print()
@@ -600,7 +646,7 @@ def pointcloud_to_mesh_improved(
     
     pcd_original = pcd
     
-    # Aggressive outlier removal
+    # Outlier removal (only if aggressive mode enabled)
     if aggressive_outlier:
         pcd = aggressive_outlier_removal(pcd, verbose)
     
@@ -614,7 +660,8 @@ def pointcloud_to_mesh_improved(
             pcd, 
             use_planes=use_planes,
             poisson_depth=poisson_depth,
-            verbose=verbose
+            verbose=verbose,
+            aggressive_clean=aggressive_outlier
         )
     elif method == 'ball_pivoting':
         pcd = estimate_normals_improved(pcd, verbose)
@@ -622,10 +669,14 @@ def pointcloud_to_mesh_improved(
         if mesh is not None and len(mesh.triangles) > 0:
             mesh = transfer_colors_to_mesh(mesh, pcd_original, verbose)
             mesh.compute_vertex_normals()
-    else:  # poisson
+    else:  # poisson (default)
         pcd = estimate_normals_improved(pcd, verbose)
         mesh, densities = poisson_reconstruction_improved(pcd, poisson_depth, verbose)
-        mesh = clean_mesh_aggressive(mesh, densities, verbose=verbose)
+        # Use standard or aggressive cleaning based on setting
+        if aggressive_outlier:
+            mesh = clean_mesh_aggressive(mesh, densities, verbose=verbose)
+        else:
+            mesh = clean_mesh_standard(mesh, densities, verbose=verbose)
         if len(mesh.triangles) > 0:
             mesh = transfer_colors_to_mesh(mesh, pcd_original, verbose)
     
