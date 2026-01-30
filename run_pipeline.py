@@ -55,11 +55,26 @@ def run_pipeline(
     input_splat,
     output_mesh,
     opacity_threshold=0.3,
+    max_scale=None,
     poisson_depth=9,
     density_threshold=0.01,
     voxel_size=None,
     target_triangles=None,
     outlier_std_ratio=2.0,
+    reconstruction_method='poisson',
+    linear_fit=True,
+    alpha_value=None,
+    segmented=False,
+    plane_distance=0.02,
+    plane_min_ratio=0.02,
+    max_planes=10,
+    smooth_organic=True,
+    smooth_iterations=5,
+    use_alpha_shapes=False,
+    flip_normals=False,
+    double_sided=False,
+    smooth_final=False,
+    smooth_final_iterations=5,
     keep_intermediate=False,
     intermediate_dir=None,
     verbose=True
@@ -76,6 +91,19 @@ def run_pipeline(
         voxel_size: Voxel size for point cloud downsampling
         target_triangles: Target triangle count for mesh simplification
         outlier_std_ratio: Std ratio for outlier removal (lower = more aggressive)
+        reconstruction_method: 'poisson', 'bpa' (ball pivoting), or 'alpha' (alpha shapes)
+        linear_fit: Use linear fit for Poisson (better adherence to points)
+        alpha_value: Custom alpha for alpha shapes (None = auto)
+        segmented: Use segmented reconstruction (planes vs organic)
+        plane_distance: RANSAC distance threshold for plane detection
+        plane_min_ratio: Minimum ratio of points for valid plane
+        max_planes: Maximum number of planes to detect
+        smooth_organic: Apply Taubin smoothing to organic regions
+        smooth_iterations: Number of smoothing iterations
+        use_alpha_shapes: Use alpha shapes for plane meshing
+        flip_normals: Flip all normals (use if mesh appears inside-out in Unity)
+        smooth_final: Apply Taubin smoothing to final mesh
+        smooth_final_iterations: Number of final smoothing iterations
         keep_intermediate: Keep intermediate point cloud file
         intermediate_dir: Directory for intermediate files (default: same as output)
         verbose: Print progress information
@@ -114,11 +142,32 @@ def run_pipeline(
         print()
         print("  PARAMETERS:")
         print(f"    Opacity threshold:    {opacity_threshold}")
-        print(f"    Poisson depth:        {poisson_depth}")
+        print(f"    Reconstruction:       {reconstruction_method}")
+        if reconstruction_method == 'poisson':
+            print(f"    Poisson depth:        {poisson_depth}")
+            print(f"    Linear fit:           {linear_fit}")
+        elif reconstruction_method == 'alpha':
+            print(f"    Alpha value:          {alpha_value if alpha_value else 'auto'}")
         print(f"    Density threshold:    {density_threshold}")
         print(f"    Voxel size:           {voxel_size if voxel_size else 'auto'}")
         print(f"    Target triangles:     {target_triangles if target_triangles else 'none'}")
         print(f"    Outlier std ratio:    {outlier_std_ratio}")
+        if smooth_final:
+            print(f"    Final smoothing:      {smooth_final_iterations} iterations")
+        if segmented:
+            print()
+            print("  SEGMENTED RECONSTRUCTION:")
+            print(f"    Enabled:              True")
+            print(f"    Plane distance:       {plane_distance}")
+            print(f"    Plane min ratio:      {plane_min_ratio}")
+            print(f"    Max planes:           {max_planes}")
+            print(f"    Smooth organic:       {smooth_organic}")
+            print(f"    Smooth iterations:    {smooth_iterations}")
+            print(f"    Use alpha shapes:     {use_alpha_shapes}")
+        if flip_normals:
+            print()
+            print(f"    Flip normals:         {flip_normals}")
+        print()
         print(f"    Keep intermediate:    {keep_intermediate}")
         print("=" * 70)
         print()
@@ -133,6 +182,7 @@ def run_pipeline(
         str(input_path),
         str(pointcloud_path),
         opacity_threshold=opacity_threshold,
+        max_scale=max_scale,
         verbose=verbose
     )
     stage1_time = time.time() - stage1_start
@@ -162,6 +212,20 @@ def run_pipeline(
         voxel_size=voxel_size,
         target_triangles=target_triangles,
         outlier_std_ratio=outlier_std_ratio,
+        reconstruction_method=reconstruction_method,
+        linear_fit=linear_fit,
+        alpha_value=alpha_value,
+        segmented=segmented,
+        plane_distance=plane_distance,
+        plane_min_ratio=plane_min_ratio,
+        max_planes=max_planes,
+        smooth_organic=smooth_organic,
+        smooth_iterations=smooth_iterations,
+        use_alpha_shapes=use_alpha_shapes,
+        flip_normals=flip_normals,
+        double_sided=double_sided,
+        smooth_final=smooth_final,
+        smooth_final_iterations=smooth_final_iterations,
         verbose=verbose
     )
     stage2_time = time.time() - stage2_start
@@ -226,17 +290,34 @@ Examples:
   # Higher quality mesh
   python run_pipeline.py model.ply mesh.obj --depth 10 --opacity 0.2
 
+  # Ball Pivoting Algorithm (better for sharp edges, distinct surfaces)
+  python run_pipeline.py model.ply mesh.obj --method bpa --voxel-size 0
+
+  # Alpha shapes (good for concave objects)
+  python run_pipeline.py model.ply mesh.obj --method alpha
+
   # Mobile-optimized (fewer triangles)
   python run_pipeline.py model.ply mesh.obj --simplify 50000
+
+  # Segmented reconstruction (better for architectural scenes with walls/floors)
+  python run_pipeline.py model.ply mesh.obj --segmented
+
+  # Segmented with custom plane detection
+  python run_pipeline.py model.ply mesh.obj --segmented --plane-distance 0.03 --max-planes 15
 
   # Keep intermediate point cloud for inspection
   python run_pipeline.py model.ply mesh.obj --keep-intermediate
 
+  # With final mesh smoothing
+  python run_pipeline.py model.ply mesh.obj --smooth
+
 Quality Presets:
   Low (fast):    --depth 7 --opacity 0.5 --simplify 20000
   Medium:        --depth 8 --opacity 0.3 --simplify 50000
-  High:          --depth 9 --opacity 0.2
-  Ultra:         --depth 10 --opacity 0.1
+  High:          --depth 9 --opacity 0.2 --voxel-size 0
+  Ultra:         --depth 11 --opacity 0.1 --voxel-size 0
+  Sharp edges:   --method bpa --opacity 0.2 --voxel-size 0
+  Architectural: --depth 10 --opacity 0.2 --segmented --max-planes 15
         """
     )
     
@@ -251,9 +332,22 @@ Quality Presets:
         default=0.3,
         help="Minimum opacity threshold for points (0-1, default: 0.3)"
     )
+    extraction_group.add_argument(
+        "--max-scale",
+        type=float,
+        default=None,
+        help="Maximum Gaussian scale to include (filters large/blobby Gaussians, e.g., 0.05)"
+    )
     
     # Mesh generation options
     mesh_group = parser.add_argument_group("Mesh Generation Options")
+    mesh_group.add_argument(
+        "--method", "-m",
+        type=str,
+        choices=['poisson', 'bpa', 'alpha', 'hybrid'],
+        default='poisson',
+        help="Reconstruction method: poisson (watertight), bpa (sharp edges), alpha (concave), hybrid (bpa+poisson fills holes) (default: poisson)"
+    )
     mesh_group.add_argument(
         "--depth", "-d",
         type=int,
@@ -270,7 +364,7 @@ Quality Presets:
         "--voxel-size", "-v",
         type=float,
         default=None,
-        help="Voxel size for point cloud downsampling (default: auto)"
+        help="Voxel size for point cloud downsampling (default: auto, 0=disabled)"
     )
     mesh_group.add_argument(
         "--simplify", "-s",
@@ -283,6 +377,83 @@ Quality Presets:
         type=float,
         default=2.0,
         help="Outlier removal std ratio - lower=more aggressive (default: 2.0)"
+    )
+    mesh_group.add_argument(
+        "--no-linear-fit",
+        action="store_true",
+        help="Disable linear fit for Poisson (default: enabled)"
+    )
+    mesh_group.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="Alpha value for alpha shapes method (default: auto)"
+    )
+    
+    # Segmented reconstruction options
+    seg_group = parser.add_argument_group("Segmented Reconstruction (for architectural scenes)")
+    seg_group.add_argument(
+        "--segmented", "-S",
+        action="store_true",
+        help="Enable segmented reconstruction (planes processed separately)"
+    )
+    seg_group.add_argument(
+        "--plane-distance",
+        type=float,
+        default=0.02,
+        help="RANSAC distance threshold for plane detection (default: 0.02)"
+    )
+    seg_group.add_argument(
+        "--plane-min-ratio",
+        type=float,
+        default=0.02,
+        help="Minimum ratio of points for valid plane (default: 0.02)"
+    )
+    seg_group.add_argument(
+        "--max-planes",
+        type=int,
+        default=10,
+        help="Maximum number of planes to detect (default: 10)"
+    )
+    seg_group.add_argument(
+        "--no-smooth-organic",
+        action="store_true",
+        help="Disable Taubin smoothing on organic regions"
+    )
+    seg_group.add_argument(
+        "--smooth-iterations",
+        type=int,
+        default=5,
+        help="Number of Taubin smoothing iterations (default: 5)"
+    )
+    seg_group.add_argument(
+        "--use-alpha-shapes",
+        action="store_true",
+        help="Use alpha shapes instead of Delaunay for plane meshing"
+    )
+    
+    # Mesh fixing options
+    fix_group = parser.add_argument_group("Mesh Fixing Options")
+    fix_group.add_argument(
+        "--flip-normals",
+        action="store_true",
+        help="Flip all mesh normals (use if mesh appears inside-out in Unity)"
+    )
+    fix_group.add_argument(
+        "--double-sided",
+        action="store_true",
+        help="Make mesh double-sided (fixes see-through faces, doubles triangle count)"
+    )
+    fix_group.add_argument(
+        "--smooth",
+        action="store_true",
+        help="Apply Taubin smoothing to final mesh"
+    )
+    fix_group.add_argument(
+        "--smooth-final-iterations",
+        type=int,
+        default=5,
+        help="Number of final smoothing iterations (default: 5)"
     )
     
     # Output options
@@ -310,11 +481,26 @@ Quality Presets:
         args.input,
         args.output,
         opacity_threshold=args.opacity,
+        max_scale=args.max_scale,
         poisson_depth=args.depth,
         density_threshold=args.density_threshold,
         voxel_size=args.voxel_size,
         target_triangles=args.simplify,
         outlier_std_ratio=args.outlier_std,
+        reconstruction_method=args.method,
+        linear_fit=not args.no_linear_fit,
+        alpha_value=args.alpha,
+        segmented=args.segmented,
+        plane_distance=args.plane_distance,
+        plane_min_ratio=args.plane_min_ratio,
+        max_planes=args.max_planes,
+        smooth_organic=not args.no_smooth_organic,
+        smooth_iterations=args.smooth_iterations,
+        use_alpha_shapes=args.use_alpha_shapes,
+        flip_normals=args.flip_normals,
+        double_sided=args.double_sided,
+        smooth_final=args.smooth,
+        smooth_final_iterations=args.smooth_final_iterations,
         keep_intermediate=args.keep_intermediate,
         intermediate_dir=args.intermediate_dir,
         verbose=not args.quiet

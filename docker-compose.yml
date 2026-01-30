@@ -4,7 +4,7 @@ services:
     image: splat-to-mesh:latest
     volumes:
       - ./data:/data
-    command: ["model.ply", "mesh.ply"]
+    command: ["airplane.ply", "mesh.ply"]
 
   # High quality preset
   splat-to-mesh-high:
@@ -14,6 +14,13 @@ services:
       - ./data:/data
     command: ["--depth", "10", "--opacity", "0.2", "model.ply", "mesh_high.ply"]
 
+  splat-to-mesh-planes:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--opacity", "0.2", "--segmented", "--plane-distance", "0.03", "--max-planes", "15", "airplane.ply", "mesh_planes.ply"]
+
   # Mobile-optimized preset (fewer triangles)
   splat-to-mesh-mobile:
     build: .
@@ -21,3 +28,139 @@ services:
     volumes:
       - ./data:/data
     command: ["--depth", "8", "--opacity", "0.3", "--simplify", "50000", "model.ply", "mesh_mobile.ply"]
+
+  # Ultra high quality Poisson (no downsampling, max detail)
+  splat-to-mesh-ultra:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_ultra.ply"]
+
+  # Ball Pivoting Algorithm (better for sharp edges and distinct surfaces)
+  splat-to-mesh-bpa:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_bpa.ply"]
+
+  # With final Taubin smoothing (reduces surface noise)
+  splat-to-mesh-smooth:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "--smooth", "airplane.ply", "mesh_smooth.ply"]
+
+  # Debug mode (keeps intermediate point cloud for inspection)
+  splat-to-mesh-debug:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "--keep-intermediate", "airplane.ply", "mesh_debug.ply"]
+
+  # Hybrid mode (BPA for sharp edges + Poisson to fill holes)
+  splat-to-mesh-hybrid:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "hybrid", "--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_hybrid.ply"]
+
+  # Alpha shapes (alternative to BPA, often fills better)
+  splat-to-mesh-alpha:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "alpha", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_alpha.ply"]
+
+  # Poisson with aggressive trimming (reduces bloat by removing 10% lowest density)
+  splat-to-mesh-trimmed:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "--density-threshold", "0.075", "airplane.ply", "mesh_trimmed.ply"]
+
+  # Poisson with very aggressive trimming (removes 20% lowest density)
+  splat-to-mesh-tight:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "--density-threshold", "0.2", "airplane.ply", "mesh_tight.ply"]
+
+  # BPA with smoothing (smooth out the jagged edges)
+  splat-to-mesh-bpa-smooth:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0.01", "--opacity", "0.3", "--smooth", "--smooth-final-iterations", "20", "airplane.ply", "mesh_bpa_smooth.ply"]
+
+  # BPA double-sided (fixes see-through faces from inconsistent normals)
+  splat-to-mesh-bpa-double:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_double.ply"]
+
+  # BPA with more points (lower opacity extracts more for thin geometry)
+  splat-to-mesh-bpa-dense:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0.05", "--double-sided", "airplane.ply", "mesh_bpa_dense.ply"]
+
+  # BPA with scale filtering (removes large/blobby Gaussians for cleaner surface)
+  splat-to-mesh-bpa-clean:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--max-scale", "0", "--double-sided", "airplane.ply", "mesh_bpa_clean.ply"]
+
+  # BPA best quality (all filters, double-sided)
+  splat-to-mesh-bpa-best:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--max-scale", "0.05", "--double-sided", "airplane.ply", "mesh_bpa_best.ply"]
+
+  # BPA aggressive cleanup (removes more spurious triangles)
+  splat-to-mesh-bpa-aggressive:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_aggressive.ply"]
+
+  # Poisson with 30% trim (very aggressive - removes bloat significantly)  
+  splat-to-mesh-poisson30:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0", "--density-threshold", "0.3", "airplane.ply", "mesh_poisson30.ply"]
+
+  # Poisson with 40% trim (extremely aggressive)
+  splat-to-mesh-poisson40:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0", "--density-threshold", "0.4", "airplane.ply", "mesh_poisson40.ply"]
+
+  # Simple BPA - no aggressive filtering, just double-sided for normals
+  splat-to-mesh-bpa-simple:
+    build: .
+    image: splat-to-mesh:latest
+    volumes:
+      - ./data:/data
+    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_simple.ply"]

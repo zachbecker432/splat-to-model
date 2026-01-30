@@ -7,7 +7,8 @@ Shader "Custom/VertexColorURP"
 {
     Properties
     {
-        [Toggle(_DOUBLE_SIDED)] _DoubleSided ("Double Sided", Float) = 0
+        [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
+        [Toggle] _FlipNormals ("Flip Normals", Float) = 0
     }
 
     SubShader
@@ -24,7 +25,7 @@ Shader "Custom/VertexColorURP"
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
 
-            Cull [_DoubleSided]
+            Cull [_Cull]
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -32,10 +33,11 @@ Shader "Custom/VertexColorURP"
             #pragma multi_compile_fog
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma shader_feature_local _DOUBLE_SIDED
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+
+            float _FlipNormals;
 
             struct Attributes
             {
@@ -57,8 +59,15 @@ Shader "Custom/VertexColorURP"
             {
                 Varyings output;
 
+                // Apply normal flip if enabled
+                float3 normalOS = input.normalOS;
+                if (_FlipNormals > 0.5)
+                {
+                    normalOS = -normalOS;
+                }
+
                 VertexPositionInputs posInputs = GetVertexPositionInputs(input.positionOS.xyz);
-                VertexNormalInputs normInputs = GetVertexNormalInputs(input.normalOS);
+                VertexNormalInputs normInputs = GetVertexNormalInputs(normalOS);
 
                 output.positionCS = posInputs.positionCS;
                 output.positionWS = posInputs.positionWS;
@@ -69,13 +78,18 @@ Shader "Custom/VertexColorURP"
                 return output;
             }
 
-            half4 frag(Varyings input) : SV_Target
+            half4 frag(Varyings input, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 // Get main light
                 Light mainLight = GetMainLight();
 
                 // Calculate simple diffuse lighting
+                // Flip normal for back faces when rendering double-sided
                 float3 normalWS = normalize(input.normalWS);
+                if (!isFrontFace)
+                {
+                    normalWS = -normalWS;
+                }
                 float NdotL = saturate(dot(normalWS, mainLight.direction)) * 0.5 + 0.5;
 
                 // Apply vertex color with lighting
@@ -90,7 +104,7 @@ Shader "Custom/VertexColorURP"
             ENDHLSL
         }
 
-        // Shadow caster pass
+        // Shadow caster pass - compatible with all URP versions
         Pass
         {
             Name "ShadowCaster"
@@ -99,14 +113,13 @@ Shader "Custom/VertexColorURP"
             ZWrite On
             ZTest LEqual
             ColorMask 0
-            Cull [_DoubleSided]
+            Cull [_Cull]
 
             HLSLPROGRAM
             #pragma vertex ShadowPassVertex
             #pragma fragment ShadowPassFragment
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
             struct Attributes
             {
@@ -120,17 +133,83 @@ Shader "Custom/VertexColorURP"
             };
 
             float3 _LightDirection;
+            float4 _ShadowBias; // x: depth bias, y: normal bias
+
+            // Custom shadow bias function to avoid dependency on deprecated URP functions
+            float4 GetShadowPositionHClip(Attributes input)
+            {
+                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
+                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+
+                // Apply shadow bias
+                float invNdotL = 1.0 - saturate(dot(_LightDirection, normalWS));
+                float scale = invNdotL * _ShadowBias.y;
+
+                // Normal bias
+                positionWS = positionWS + normalWS * scale.xxx;
+
+                float4 positionCS = TransformWorldToHClip(positionWS);
+
+                // Depth bias
+                #if UNITY_REVERSED_Z
+                    positionCS.z += _ShadowBias.x;
+                    positionCS.z = min(positionCS.z, positionCS.w * 0.99999f);
+                #else
+                    positionCS.z -= _ShadowBias.x;
+                    positionCS.z = max(positionCS.z, positionCS.w * 0.00001f);
+                #endif
+
+                return positionCS;
+            }
 
             Varyings ShadowPassVertex(Attributes input)
             {
                 Varyings output;
-                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
-                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
-                output.positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, _LightDirection));
+                output.positionCS = GetShadowPositionHClip(input);
                 return output;
             }
 
             half4 ShadowPassFragment(Varyings input) : SV_TARGET
+            {
+                return 0;
+            }
+            ENDHLSL
+        }
+
+        // Depth only pass for depth prepass
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ColorMask 0
+            Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            Varyings DepthOnlyVertex(Attributes input)
+            {
+                Varyings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
+            }
+
+            half4 DepthOnlyFragment(Varyings input) : SV_TARGET
             {
                 return 0;
             }

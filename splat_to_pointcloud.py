@@ -84,6 +84,69 @@ def extract_opacity(vertex, verbose=True):
     return opacity
 
 
+def extract_scales(vertex, verbose=True):
+    """
+    Extract Gaussian scale values from vertex data.
+    Scales are typically stored in log-space (need exp to convert).
+    
+    Returns:
+        Average scale per Gaussian, or None if no scale fields found
+    """
+    names = vertex.data.dtype.names
+    
+    # Try various scale field naming conventions
+    scale_fields = []
+    
+    # Standard 3DGS format: scale_0, scale_1, scale_2
+    if all(f'scale_{i}' in names for i in range(3)):
+        scale_fields = ['scale_0', 'scale_1', 'scale_2']
+    # Alternative: scaling_0, scaling_1, scaling_2
+    elif all(f'scaling_{i}' in names for i in range(3)):
+        scale_fields = ['scaling_0', 'scaling_1', 'scaling_2']
+    # Another alternative: sx, sy, sz
+    elif all(f in names for f in ['sx', 'sy', 'sz']):
+        scale_fields = ['sx', 'sy', 'sz']
+    
+    if not scale_fields:
+        if verbose:
+            print("  No scale fields found")
+        return None
+    
+    if verbose:
+        print(f"  Found scale fields: {scale_fields}")
+    
+    # Extract scale values
+    s0 = np.array(vertex[scale_fields[0]])
+    s1 = np.array(vertex[scale_fields[1]])
+    s2 = np.array(vertex[scale_fields[2]])
+    
+    if verbose:
+        print(f"  Raw scale ranges:")
+        print(f"    {scale_fields[0]}: [{s0.min():.4f}, {s0.max():.4f}]")
+        print(f"    {scale_fields[1]}: [{s1.min():.4f}, {s1.max():.4f}]")
+        print(f"    {scale_fields[2]}: [{s2.min():.4f}, {s2.max():.4f}]")
+    
+    # Scales are typically stored in log-space, convert to linear
+    # Check if values look like log-space (negative values or very small range)
+    if s0.min() < 0 or s0.max() < 1:
+        if verbose:
+            print("  Detected log-space scales, applying exp...")
+        s0 = np.exp(s0)
+        s1 = np.exp(s1)
+        s2 = np.exp(s2)
+    
+    # Compute average scale (or max scale) per Gaussian
+    avg_scale = (s0 + s1 + s2) / 3.0
+    max_scale = np.maximum(np.maximum(s0, s1), s2)
+    
+    if verbose:
+        print(f"  Average scale range: [{avg_scale.min():.6f}, {avg_scale.max():.6f}]")
+        print(f"  Max scale range: [{max_scale.min():.6f}, {max_scale.max():.6f}]")
+        print(f"  Scale percentiles (avg): 25%={np.percentile(avg_scale, 25):.6f}, 50%={np.percentile(avg_scale, 50):.6f}, 75%={np.percentile(avg_scale, 75):.6f}, 95%={np.percentile(avg_scale, 95):.6f}")
+    
+    return avg_scale
+
+
 def extract_colors(vertex, verbose=True):
     """
     Extract RGB colors from vertex data.
@@ -181,7 +244,7 @@ def extract_colors(vertex, verbose=True):
     )
 
 
-def splat_to_pointcloud(input_path, output_path, opacity_threshold=0.5, verbose=True):
+def splat_to_pointcloud(input_path, output_path, opacity_threshold=0.5, max_scale=None, verbose=True):
     """
     Extract point cloud from Gaussian Splat PLY file.
     
@@ -189,6 +252,7 @@ def splat_to_pointcloud(input_path, output_path, opacity_threshold=0.5, verbose=
         input_path: Path to input .ply splat file
         output_path: Path to output .ply point cloud file
         opacity_threshold: Minimum opacity to include point (0-1)
+        max_scale: Maximum Gaussian scale to include (None = no filtering, filters large/blobby Gaussians)
         verbose: Print progress information
     
     Returns:
@@ -280,6 +344,33 @@ def splat_to_pointcloud(input_path, output_path, opacity_threshold=0.5, verbose=
         if verbose:
             print("    [WARNING] No opacity data found, keeping all points")
         mask = np.ones(len(x), dtype=bool)
+    
+    # Extract and apply scale filter (removes large/blobby Gaussians)
+    if max_scale is not None:
+        if verbose:
+            print("  " + "-" * 50)
+            print("  SCALE FILTERING")
+            print("  " + "-" * 50)
+        
+        scales = extract_scales(vertex, verbose=verbose)
+        
+        if scales is not None:
+            scale_mask = scales <= max_scale
+            combined_mask = mask & scale_mask
+            
+            scale_filtered = np.sum(mask) - np.sum(combined_mask)
+            
+            if verbose:
+                print(f"    Max scale threshold: {max_scale}")
+                print(f"    Points filtered by scale: {scale_filtered:,}")
+                print(f"    Points remaining: {np.sum(combined_mask):,}")
+            
+            mask = combined_mask
+            print()
+        else:
+            if verbose:
+                print("    [WARNING] No scale data found, skipping scale filter")
+                print()
     
     # Extract colors
     if verbose:
@@ -421,6 +512,9 @@ Examples:
   
   # With higher opacity filter (less noise)
   python splat_to_pointcloud.py model.ply output.ply --opacity 0.5
+  
+  # Filter out large/blobby Gaussians (keeps sharper detail)
+  python splat_to_pointcloud.py model.ply output.ply --max-scale 0.05
         """
     )
     parser.add_argument("input", help="Input .ply splat file")
@@ -430,6 +524,12 @@ Examples:
         type=float,
         default=0.5,
         help="Minimum opacity threshold (0-1, default: 0.5)"
+    )
+    parser.add_argument(
+        "--max-scale", "-s",
+        type=float,
+        default=None,
+        help="Maximum Gaussian scale to include (filters large/blobby Gaussians, e.g., 0.05)"
     )
     parser.add_argument(
         "--inspect", "-i",
@@ -456,6 +556,7 @@ Examples:
             args.input,
             args.output,
             opacity_threshold=args.opacity,
+            max_scale=args.max_scale,
             verbose=not args.quiet
         )
 

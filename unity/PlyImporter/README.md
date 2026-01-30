@@ -7,6 +7,7 @@ A simple PLY file importer for Unity with full vertex color support. Designed to
 - Imports PLY files directly into Unity
 - Full vertex color support (the main reason this exists)
 - Supports both ASCII and binary PLY formats
+- **Automatic render pipeline detection** - automatically uses the correct shader for Built-in, URP, or HDRP
 - Automatic material creation with vertex color shaders
 - Drag-and-drop import in Unity Editor
 - Shaders for Built-in, URP, and unlit rendering
@@ -87,7 +88,7 @@ public class RuntimePlyLoader : MonoBehaviour
 
 ## Shaders
 
-Three vertex color shaders are included:
+Three vertex color shaders are included. **The importer automatically detects your render pipeline and uses the correct shader.**
 
 ### Custom/VertexColor (Built-in RP)
 - For Built-in Render Pipeline
@@ -102,8 +103,22 @@ Three vertex color shaders are included:
 
 ### Custom/VertexColorURP
 - For Universal Render Pipeline (URP)
-- Includes basic lighting
-- Supports shadows
+- Includes basic lighting and shadows
+- Material options:
+  - **Cull Mode**: Off (both sides), Front, or Back (default)
+  - **Flip Normals**: Toggle to flip normals if mesh appears inside-out
+
+### Automatic Pipeline Detection
+
+When you import a PLY file, the importer checks which render pipeline you're using:
+
+| Render Pipeline | Shader Used |
+|----------------|-------------|
+| Built-in | Custom/VertexColor |
+| URP | Custom/VertexColorURP |
+| HDRP | HDRP/Lit (fallback) |
+
+If the custom shader isn't found, it falls back to built-in alternatives.
 
 ## Coordinate Systems
 
@@ -119,18 +134,27 @@ If your model appears rotated incorrectly, try enabling **Swap YZ** in the impor
 
 ## Troubleshooting
 
+### Model appears pink (missing shader)
+- This usually means the shader failed to compile or isn't compatible with your render pipeline
+- **For URP projects**: Make sure `VertexColorURP.shader` is in your project
+- Try reimporting the PLY file after adding the shaders
+- Check the Console for shader compilation errors
+
 ### Model appears white
-- Make sure you're using one of the vertex color shaders (Custom/VertexColor or Custom/VertexColorUnlit)
+- Make sure you're using one of the vertex color shaders (Custom/VertexColor or Custom/VertexColorURP)
 - Standard Unity shaders don't display vertex colors by default
+- Check that the PLY file actually contains color data
 
 ### Model is very small or large
 - Adjust the **Scale** import setting
 - Common scales: 0.01 (cm to meters), 100 (meters to cm)
 
-### Model appears inside-out
+### Model appears inside-out or has dark faces
 - The mesh normals may be flipped
-- Enable **Double Sided** on the material
+- **For URP**: On the material, set **Cull Mode** to `Off` (renders both sides)
+- **For URP**: Toggle **Flip Normals** on the material
 - Or enable **Recalculate Normals** in import settings
+- Or regenerate the mesh with `--flip-normals` flag in the pipeline
 
 ### Colors look wrong
 - The PLY file may use 0-1 range instead of 0-255 for colors
