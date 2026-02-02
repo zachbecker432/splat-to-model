@@ -1,6 +1,6 @@
 # Splat to Mesh Pipeline
 
-Convert Gaussian Splat PLY files (from Postshot/Jawset) to Unity-ready 3D meshes.
+Convert Gaussian Splat PLY files (from Postshot/Jawset) to Unity-ready 3D meshes using Ball Pivoting Algorithm (BPA).
 
 ```
 Gaussian Splat (.ply) --> Point Cloud --> Mesh (.obj) --> Unity
@@ -8,127 +8,123 @@ Gaussian Splat (.ply) --> Point Cloud --> Mesh (.obj) --> Unity
 
 ## Prerequisites
 
-**Option A: Docker (Recommended)**
 - Docker Desktop
-
-**Option B: Local Python**
-- Python 3.8+
 
 ## Quick Start
 
-### Using Docker
+1. Place your `.ply` file in the `data/` folder
+2. Edit `docker-compose.yml` to set your input/output filenames
+3. Run:
 
 ```powershell
-# Build the image (first time only)
-docker build -t splat-to-mesh:latest .
-
-# Run the pipeline
-.\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj
+docker compose up --build
 ```
 
-Or with the batch file:
+## Configuration
 
-```cmd
-docker-run.bat model.ply mesh.obj
+All settings are configured via environment variables in `docker-compose.yml`:
+
+```yaml
+services:
+  splat-to-mesh:
+    environment:
+      # Required
+      - INPUT_FILE=model.ply      # Your input file in data/
+      - OUTPUT_FILE=mesh.obj      # Output filename in data/
+      
+      # Point extraction
+      - OPACITY_THRESHOLD=0.3     # 0-1, lower = more points
+      # - MAX_SCALE=0.05          # Filter large Gaussians
+      
+      # Mesh generation  
+      # - VOXEL_SIZE=0            # 0 = no downsampling
+      # - TARGET_TRIANGLES=50000  # Simplify mesh
+      - OUTLIER_STD_RATIO=2.0     # Lower = more aggressive cleanup
+      - THIN_GEOMETRY=true        # Better for thin features
+      
+      # Mesh fixes
+      - FLIP_NORMALS=false        # Fix inside-out mesh
+      - DOUBLE_SIDED=false        # Visible from both sides
+      - SMOOTH_FINAL=false        # Apply smoothing
+      # - SMOOTH_ITERATIONS=5
+      
+      # Output
+      - KEEP_INTERMEDIATE=false   # Keep point cloud file
+      - VERBOSE=true
 ```
 
-### Using Python Directly
+## Environment Variables
 
-```powershell
-# Install dependencies
-pip install -r requirements.txt
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `INPUT_FILE` | Input Gaussian Splat PLY file (required) | - |
+| `OUTPUT_FILE` | Output mesh file (required) | - |
+| `OPACITY_THRESHOLD` | Minimum opacity for points (0-1). Lower = more points | 0.3 |
+| `MAX_SCALE` | Maximum Gaussian scale to include | - |
+| `VOXEL_SIZE` | Voxel size for downsampling (0 = disabled) | auto |
+| `TARGET_TRIANGLES` | Target triangle count for simplification | - |
+| `OUTLIER_STD_RATIO` | Outlier removal aggressiveness (lower = more) | 2.0 |
+| `THIN_GEOMETRY` | Add extra radii for thin features | true |
+| `FLIP_NORMALS` | Flip mesh normals if inside-out | false |
+| `DOUBLE_SIDED` | Make mesh visible from both sides | false |
+| `SMOOTH_FINAL` | Apply Taubin smoothing | false |
+| `SMOOTH_ITERATIONS` | Number of smoothing iterations | 5 |
+| `KEEP_INTERMEDIATE` | Keep intermediate point cloud | false |
+| `VERBOSE` | Print progress information | true |
 
-# Run the pipeline
-python run_pipeline.py model.ply mesh.obj
-```
+## Quality Presets
 
-## Usage
-
-### Basic Command
-
-```powershell
-# Docker
-.\docker-run.ps1 -InputFile <input.ply> -OutputFile <output.obj>
-
-# Python
-python run_pipeline.py <input.ply> <output.obj>
-```
-
-### Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--opacity` / `-o` | Minimum opacity threshold (0-1). Lower = more points but noisier | 0.3 |
-| `--depth` / `-d` | Poisson reconstruction depth (6-11). Higher = more detail | 9 |
-| `--simplify` / `-s` | Target triangle count. Reduces mesh complexity | None |
-| `--density-threshold` / `-t` | Remove low-density vertices (0-1) | 0.01 |
-| `--keep-intermediate` / `-k` | Keep the intermediate point cloud file | False |
-
-### Quality Presets
+Edit the environment variables in `docker-compose.yml`:
 
 **Low Quality (Fast)**
-```powershell
-python run_pipeline.py model.ply mesh.obj --depth 7 --opacity 0.5 --simplify 20000
+```yaml
+- OPACITY_THRESHOLD=0.5
+- TARGET_TRIANGLES=20000
 ```
 
 **Medium Quality**
-```powershell
-python run_pipeline.py model.ply mesh.obj --depth 8 --opacity 0.3 --simplify 50000
+```yaml
+- OPACITY_THRESHOLD=0.3
+- TARGET_TRIANGLES=50000
 ```
 
 **High Quality**
-```powershell
-python run_pipeline.py model.ply mesh.obj --depth 9 --opacity 0.2
+```yaml
+- OPACITY_THRESHOLD=0.2
+- VOXEL_SIZE=0
 ```
 
 **Ultra Quality**
-```powershell
-python run_pipeline.py model.ply mesh.obj --depth 10 --opacity 0.1
+```yaml
+- OPACITY_THRESHOLD=0.1
+- VOXEL_SIZE=0
 ```
 
-### Platform-Specific Triangle Counts
+## Example Usage
 
-| Platform | Recommended `--simplify` |
-|----------|-------------------------|
+```powershell
+# Build and run with default settings
+docker compose up --build
+
+# Run with custom env vars (one-off)
+docker compose run -e INPUT_FILE=scan.ply -e OUTPUT_FILE=result.obj splat-to-mesh
+
+# Or directly with docker run
+docker run -v ./data:/data \
+  -e INPUT_FILE=model.ply \
+  -e OUTPUT_FILE=mesh.obj \
+  -e OPACITY_THRESHOLD=0.2 \
+  -e DOUBLE_SIDED=true \
+  splat-to-mesh:latest
+```
+
+## Platform-Specific Triangle Counts
+
+| Platform | Recommended `TARGET_TRIANGLES` |
+|----------|-------------------------------|
 | Mobile | 10,000 - 50,000 |
 | Desktop | 50,000 - 200,000 |
 | High-end Desktop | 200,000+ |
-
-## Examples
-
-```powershell
-# Basic conversion
-python run_pipeline.py splats/model.ply meshes/output.obj
-
-# High quality with more points extracted
-python run_pipeline.py model.ply mesh.obj --depth 10 --opacity 0.2
-
-# Mobile-optimized mesh
-python run_pipeline.py model.ply mesh.obj --simplify 30000
-
-# Keep point cloud for inspection
-python run_pipeline.py model.ply mesh.obj --keep-intermediate
-
-# Docker with options
-.\docker-run.ps1 -InputFile .\model.ply -OutputFile .\mesh.obj -Depth 10 -Opacity 0.2 -Simplify 50000
-```
-
-## Running Steps Separately
-
-You can run the two pipeline stages independently:
-
-```powershell
-# Stage 1: Extract point cloud from Gaussian Splat
-python splat_to_pointcloud.py model.ply pointcloud.ply --opacity 0.3
-
-# Stage 2: Convert point cloud to mesh
-python pointcloud_to_mesh.py pointcloud.ply mesh.obj --depth 9
-```
-
-This is useful when you want to:
-- Inspect the intermediate point cloud
-- Try different mesh settings without re-extracting points
-- Debug issues at specific stages
 
 ## Unity Import
 
@@ -137,51 +133,36 @@ This is useful when you want to:
    - URP/HDRP: Create Shader Graph with Vertex Color node
    - Built-in: Use `Particles/Standard Unlit` shader
 
-A simple vertex color shader is included in `VIDEO_TO_UNITY_QUICKSTART.md`.
+See `VIDEO_TO_UNITY_QUICKSTART.md` for detailed shader setup.
 
 ## Troubleshooting
 
 | Problem | Cause | Solution |
 |---------|-------|----------|
-| Empty mesh output | Too few points extracted | Lower `--opacity` (try 0.1-0.2) |
-| Mesh has holes | Sparse point coverage | Increase `--depth`, lower `--opacity` |
-| Mesh is blobby/smooth | Not enough detail | Increase `--depth` to 10-11 |
-| Too many polygons | High depth setting | Use `--simplify` to reduce |
+| Empty mesh output | Too few points extracted | Lower `OPACITY_THRESHOLD` (try 0.1) |
+| Mesh has holes | Sparse point coverage | Lower `OPACITY_THRESHOLD` |
+| See-through faces | Inconsistent normals | Set `DOUBLE_SIDED=true` |
+| Mesh inside-out | Wrong normal direction | Set `FLIP_NORMALS=true` |
+| Too many polygons | No simplification | Set `TARGET_TRIANGLES=50000` |
 | No colors on mesh | Color transfer failed | Check input PLY has color data |
-| Docker build fails | Missing dependencies | Ensure Docker Desktop is running |
-| "No module named open3d" | Dependencies not installed | Run `pip install -r requirements.txt` |
-
-### Adjusting Parameters
-
-**If mesh has too many artifacts:**
-- Increase `--opacity` (0.4-0.6)
-- Increase `--density-threshold` (0.02-0.05)
-
-**If mesh is missing detail:**
-- Decrease `--opacity` (0.1-0.2)
-- Increase `--depth` (10-11)
-
-**If processing is too slow:**
-- Use `--voxel-size 0.01` to downsample point cloud
-- Lower `--depth` (7-8)
 
 ## File Structure
 
 ```
 project/
-    model.ply              # Input: Gaussian Splat from Postshot
-    mesh.obj               # Output: Unity-ready mesh
+    data/
+        model.ply              # Input: Gaussian Splat from Postshot
+        mesh.obj               # Output: Unity-ready mesh
     
     # Pipeline scripts
-    run_pipeline.py        # Main pipeline script
-    splat_to_pointcloud.py # Stage 1: Extract points
-    pointcloud_to_mesh.py  # Stage 2: Generate mesh
+    run_pipeline.py            # Main pipeline (reads env vars)
+    splat_to_pointcloud.py     # Stage 1: Extract points
+    pointcloud_to_mesh.py      # Stage 2: Generate mesh (BPA)
     
     # Docker files
     Dockerfile
     docker-compose.yml
-    docker-run.ps1
-    docker-run.bat
+    requirements.txt
 ```
 
 ## Full Workflow
@@ -189,7 +170,9 @@ project/
 1. **Capture video** of your object (30-90 seconds, orbit around it)
 2. **Process in Postshot** (Jawset) to create Gaussian Splat
 3. **Export as PLY** from Postshot
-4. **Run this pipeline** to convert to mesh
-5. **Import to Unity** and apply vertex color material
+4. **Place PLY in `data/` folder**
+5. **Edit `docker-compose.yml`** with your filenames
+6. **Run `docker compose up --build`**
+7. **Import mesh to Unity** and apply vertex color material
 
-See `VIDEO_TO_UNITY_QUICKSTART.md` for detailed instructions on each step.
+See `VIDEO_TO_UNITY_QUICKSTART.md` for detailed instructions.

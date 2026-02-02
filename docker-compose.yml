@@ -4,163 +4,106 @@ services:
     image: splat-to-mesh:latest
     volumes:
       - ./data:/data
-    command: ["airplane.ply", "mesh.ply"]
-
-  # High quality preset
-  splat-to-mesh-high:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "10", "--opacity", "0.2", "model.ply", "mesh_high.ply"]
-
-  splat-to-mesh-planes:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--opacity", "0.2", "--segmented", "--plane-distance", "0.03", "--max-planes", "15", "airplane.ply", "mesh_planes.ply"]
-
-  # Mobile-optimized preset (fewer triangles)
-  splat-to-mesh-mobile:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "8", "--opacity", "0.3", "--simplify", "50000", "model.ply", "mesh_mobile.ply"]
-
-  # Ultra high quality Poisson (no downsampling, max detail)
-  splat-to-mesh-ultra:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_ultra.ply"]
-
-  # Ball Pivoting Algorithm (better for sharp edges and distinct surfaces)
-  splat-to-mesh-bpa:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_bpa.ply"]
-
-  # With final Taubin smoothing (reduces surface noise)
-  splat-to-mesh-smooth:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "--smooth", "airplane.ply", "mesh_smooth.ply"]
-
-  # Debug mode (keeps intermediate point cloud for inspection)
-  splat-to-mesh-debug:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "--keep-intermediate", "airplane.ply", "mesh_debug.ply"]
-
-  # Hybrid mode (BPA for sharp edges + Poisson to fill holes)
-  splat-to-mesh-hybrid:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "hybrid", "--depth", "10", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_hybrid.ply"]
-
-  # Alpha shapes (alternative to BPA, often fills better)
-  splat-to-mesh-alpha:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "alpha", "--voxel-size", "0", "--opacity", "0.1", "airplane.ply", "mesh_alpha.ply"]
-
-  # Poisson with aggressive trimming (reduces bloat by removing 10% lowest density)
-  splat-to-mesh-trimmed:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "--density-threshold", "0.075", "airplane.ply", "mesh_trimmed.ply"]
-
-  # Poisson with very aggressive trimming (removes 20% lowest density)
-  splat-to-mesh-tight:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0.1", "--density-threshold", "0.2", "airplane.ply", "mesh_tight.ply"]
-
-  # BPA with smoothing (smooth out the jagged edges)
-  splat-to-mesh-bpa-smooth:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0.01", "--opacity", "0.3", "--smooth", "--smooth-final-iterations", "20", "airplane.ply", "mesh_bpa_smooth.ply"]
-
-  # BPA double-sided (fixes see-through faces from inconsistent normals)
-  splat-to-mesh-bpa-double:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_double.ply"]
-
-  # BPA with more points (lower opacity extracts more for thin geometry)
-  splat-to-mesh-bpa-dense:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0.05", "--double-sided", "airplane.ply", "mesh_bpa_dense.ply"]
-
-  # BPA with scale filtering (removes large/blobby Gaussians for cleaner surface)
-  splat-to-mesh-bpa-clean:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--max-scale", "0", "--double-sided", "airplane.ply", "mesh_bpa_clean.ply"]
-
-  # BPA best quality (all filters, double-sided)
-  splat-to-mesh-bpa-best:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--max-scale", "0.05", "--double-sided", "airplane.ply", "mesh_bpa_best.ply"]
-
-  # BPA aggressive cleanup (removes more spurious triangles)
-  splat-to-mesh-bpa-aggressive:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_aggressive.ply"]
-
-  # Poisson with 30% trim (very aggressive - removes bloat significantly)  
-  splat-to-mesh-poisson30:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0", "--density-threshold", "0.3", "airplane.ply", "mesh_poisson30.ply"]
-
-  # Poisson with 40% trim (extremely aggressive)
-  splat-to-mesh-poisson40:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--depth", "11", "--voxel-size", "0", "--opacity", "0", "--density-threshold", "0.4", "airplane.ply", "mesh_poisson40.ply"]
-
-  # Simple BPA - no aggressive filtering, just double-sided for normals
-  splat-to-mesh-bpa-simple:
-    build: .
-    image: splat-to-mesh:latest
-    volumes:
-      - ./data:/data
-    command: ["--method", "bpa", "--voxel-size", "0", "--opacity", "0", "--double-sided", "airplane.ply", "mesh_bpa_simple.ply"]
+    environment:
+      # ============================================================
+      # REQUIRED - Input/Output Files
+      # ============================================================
+      
+      # INPUT_FILE: The Gaussian Splat PLY file to convert (must exist in ./data folder)
+      # Supports standard 3DGS exports from Postshot, Luma, Polycam, etc.
+      - INPUT_FILE=model.ply
+      
+      # OUTPUT_FILE: The output mesh filename (will be created in ./data folder)
+      # Supported formats: .obj, .ply, .stl, .off, .gltf
+      - OUTPUT_FILE=mesh.obj
+      
+      # ============================================================
+      # STAGE 1: Point Cloud Extraction (splat -> point cloud)
+      # ============================================================
+      
+      # OPACITY_THRESHOLD: Minimum opacity (0.0-1.0) for a Gaussian to be included
+      # - Lower values (0.1-0.2): Keep more points, including semi-transparent ones (more detail, more noise)
+      # - Higher values (0.5-0.7): Keep only solid/opaque points (cleaner mesh, may lose thin features)
+      # - Default: 0.3 (balanced)
+      - OPACITY_THRESHOLD=0.3
+      
+      # MAX_SCALE: Maximum Gaussian scale/size to include (filters out large "blobby" Gaussians)
+      # - Unset: No scale filtering (keep all sizes)
+      # - Small values (0.01-0.05): Only keep small/sharp Gaussians (removes background blobs)
+      # - Useful for cleaning up splats with large floaters or sky artifacts
+      # - Default: unset (no filtering)
+      # - MAX_SCALE=0.05
+      
+      # ============================================================
+      # STAGE 2: Mesh Generation (point cloud -> mesh via Ball Pivoting)
+      # ============================================================
+      
+      # VOXEL_SIZE: Voxel size for point cloud downsampling before meshing
+      # - Unset: Auto-calculate based on point cloud density (recommended)
+      # - 0: Disable downsampling entirely (use all points - slower, higher detail)
+      # - Positive value (e.g., 0.005): Force specific voxel size (larger = fewer points = faster)
+      # - Default: auto-calculated
+      # - VOXEL_SIZE=0
+      
+      # TARGET_TRIANGLES: Simplify final mesh to this triangle count
+      # - Unset: No simplification (keep all triangles from BPA reconstruction)
+      # - Low values (10000-50000): Lightweight mesh for mobile/web
+      # - High values (100000+): Detailed mesh for desktop/film
+      # - Default: unset (no simplification)
+      # - TARGET_TRIANGLES=50000
+      
+      # OUTLIER_STD_RATIO: Statistical outlier removal sensitivity (std deviation multiplier)
+      # - Lower values (1.0-1.5): Aggressive removal (removes more points as outliers)
+      # - Higher values (2.5-4.0): Permissive (keeps more points, including potential noise)
+      # - Default: 2.0 (balanced)
+      - OUTLIER_STD_RATIO=2.0
+      
+      # THIN_GEOMETRY: Enable thin geometry mode for Ball Pivoting Algorithm
+      # - true: Use smaller ball radii to capture thin features (fences, wires, leaves)
+      # - false: Standard radii only (faster, but may miss thin structures)
+      # - Default: true
+      - THIN_GEOMETRY=true
+      
+      # ============================================================
+      # STAGE 3: Mesh Post-Processing
+      # ============================================================
+      
+      # FLIP_NORMALS: Reverse the direction of all mesh normals
+      # - true: Flip normals (use if mesh appears inside-out in your viewer)
+      # - false: Keep original normal direction
+      # - Default: false
+      - FLIP_NORMALS=false
+      
+      # DOUBLE_SIDED: Duplicate all triangles with reversed winding to make mesh visible from both sides
+      # - true: Double triangle count, visible from any angle (useful for thin surfaces like leaves)
+      # - false: Single-sided mesh (standard, smaller file size)
+      # - Default: false
+      - DOUBLE_SIDED=false
+      
+      # SMOOTH_FINAL: Apply Taubin smoothing to reduce mesh roughness
+      # - true: Smooth the mesh (reduces sharp edges, can lose detail)
+      # - false: Keep raw mesh from BPA reconstruction
+      # - Default: false
+      - SMOOTH_FINAL=false
+      
+      # SMOOTH_ITERATIONS: Number of Taubin smoothing passes (only used if SMOOTH_FINAL=true)
+      # - Lower values (1-3): Light smoothing, preserves detail
+      # - Higher values (10-20): Heavy smoothing, very soft appearance
+      # - Default: 5
+      # - SMOOTH_ITERATIONS=5
+      
+      # ============================================================
+      # Output Options
+      # ============================================================
+      
+      # KEEP_INTERMEDIATE: Keep the intermediate point cloud PLY file after meshing
+      # - true: Save {input}_pointcloud.ply alongside the mesh (useful for debugging)
+      # - false: Delete intermediate file after mesh is generated
+      # - Default: false
+      - KEEP_INTERMEDIATE=false
+      
+      # VERBOSE: Print detailed progress and statistics during processing
+      # - true: Show all processing steps, timings, and statistics
+      # - false: Minimal output (errors only)
+      # - Default: true
+      - VERBOSE=true
