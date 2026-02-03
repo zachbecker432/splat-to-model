@@ -161,10 +161,10 @@ services:
       # ============================================================
       
       # INPUT_FILE: The Gaussian Splat PLY file to enhance (must exist in ./data folder)
-      - INPUT_FILE=model.ply
+      - INPUT_FILE=airplane.ply
       
       # OUTPUT_FILE: The enhanced Gaussian Splat PLY filename
-      - OUTPUT_FILE=enhanced.ply
+      - OUTPUT_FILE=enhanced_airplane.ply
       
       # ============================================================
       # Enhancement Operations
@@ -203,6 +203,148 @@ services:
       # - Higher values (15-25): Aggressive, fills more areas
       # - Default: 10
       - DENSITY_THRESHOLD=10
+      
+      # ============================================================
+      # Floater Removal Parameters (used when REMOVE_FLOATERS=true)
+      # ============================================================
+      
+      # FLOATER_STD_THRESHOLD: Remove Gaussians beyond this many standard deviations from centroid
+      # - Lower values (1.5-2.0): Aggressive removal, removes more outliers
+      # - Higher values (4.0-5.0): Permissive, keeps more edge Gaussians
+      # - Default: 3.0
+      - FLOATER_STD_THRESHOLD=3.0
+      
+      # FLOATER_MIN_OPACITY: Remove Gaussians with opacity below this threshold (0.0-1.0)
+      # - Lower values (0.01-0.03): Keep semi-transparent Gaussians
+      # - Higher values (0.1-0.2): Only keep solid/opaque Gaussians
+      # - Default: 0.05
+      - FLOATER_MIN_OPACITY=0.05
+      
+      # ============================================================
+      # Densification Parameters (used when DENSIFY_SPARSE=true)
+      # ============================================================
+      
+      # DENSIFY_K_NEIGHBORS: Number of nearest neighbors to interpolate from when filling sparse regions
+      # - Lower values (3-4): Less averaging, maintains sharp local features
+      # - Higher values (8-10): More averaging, smoother fills
+      # - Default: 5
+      - DENSIFY_K_NEIGHBORS=5
+      
+      # DENSIFY_JITTER: Random offset factor for new Gaussians (relative to local scale)
+      # - 0: No randomness, Gaussians placed exactly at interpolated positions
+      # - Lower values (0.01-0.02): Slight variation for natural appearance
+      # - Higher values (0.05-0.1): More spread out fills
+      # - Default: 0.02
+      - DENSIFY_JITTER=0.02
+      
+      # ============================================================
+      # Split Parameters (used when SPLIT_LARGE=true)
+      # ============================================================
+      
+      # SPLIT_THRESHOLD_PERCENTILE: Split Gaussians above this percentile in scale
+      # - Lower values (85-90): Split more Gaussians, finer detail
+      # - Higher values (97-99): Only split the very largest blobs
+      # - Default: 95
+      - SPLIT_THRESHOLD_PERCENTILE=95
+      
+      # SPLIT_MAX_NEW: Maximum number of new Gaussians to create from splitting
+      # - Lower values (5000-10000): Limit growth for memory/performance
+      # - Higher values (50000+): Allow extensive splitting
+      # - Default: 10000
+      - SPLIT_MAX_NEW=10000
+      
+      # ============================================================
+      # Plane Detection & Flattening (for walls, floors, ceilings)
+      # Useful for indoor scenes with reflections that cause depth spread
+      # ============================================================
+      
+      # FLATTEN_PLANES: Enable RANSAC plane detection and flattening
+      # - true: Detect dominant planes and project nearby Gaussians onto them
+      # - false: Skip plane detection
+      # - Default: false
+      - FLATTEN_PLANES=true
+      
+      # PLANE_MAX: Maximum number of planes to detect
+      # - Lower values (5-8): Detect only the most dominant planes
+      # - Higher values (15-25): Detect more surfaces in complex rooms
+      # - Default: 10
+      - PLANE_MAX=15
+      
+      # PLANE_DISTANCE: Distance threshold for RANSAC plane inliers
+      # - Lower values (0.01-0.03): Strict, only very close Gaussians assigned to plane
+      # - Higher values (0.08-0.15): Permissive, more Gaussians flattened
+      # - Default: 0.05
+      - PLANE_DISTANCE=0.05
+      
+      # PLANE_MIN_RATIO: Minimum ratio of Gaussians to form a valid plane
+      # - Lower values (0.02-0.03): Detect smaller planes
+      # - Higher values (0.1-0.2): Only detect major surfaces
+      # - Default: 0.05
+      - PLANE_MIN_RATIO=0.05
+      
+      # PLANE_FLATTEN_STRENGTH: How strongly to project Gaussians onto detected planes (0.0-1.0)
+      # - Lower values (0.3-0.5): Gentle flattening, preserves some depth variation
+      # - Higher values (0.9-1.0): Full projection onto plane
+      # - Default: 0.8
+      - PLANE_FLATTEN_STRENGTH=0.8
+      
+      # ============================================================
+      # Depth Consistency Filter (removes/fixes reflection artifacts)
+      # Identifies Gaussians at incorrect depths compared to neighbors
+      # ============================================================
+      
+      # DEPTH_FILTER: Enable local depth consistency filtering
+      # - true: Find and fix depth outliers (e.g., from reflections)
+      # - false: Skip depth filtering
+      # - Default: false
+      - DEPTH_FILTER=true
+      
+      # DEPTH_NEIGHBORS: Number of neighbors to analyze for depth consistency
+      # - Lower values (10-15): Faster, but may miss some outliers
+      # - Higher values (25-40): More thorough analysis
+      # - Default: 20
+      - DEPTH_NEIGHBORS=20
+      
+      # DEPTH_STD_THRESHOLD: Standard deviations from local surface to be flagged as outlier
+      # - Lower values (1.0-1.5): Aggressive, flags more as outliers
+      # - Higher values (2.5-4.0): Conservative, only extreme outliers
+      # - Default: 2.0
+      - DEPTH_STD_THRESHOLD=2.0
+      
+      # DEPTH_REMOVE_OUTLIERS: Whether to remove depth outliers or project them to surface
+      # - true: Remove outlier Gaussians entirely
+      # - false: Project outliers to the local surface (preserves color/detail)
+      # - Default: false (project instead of remove)
+      - DEPTH_REMOVE_OUTLIERS=false
+      
+      # ============================================================
+      # Surface Thickness Compression
+      # Compresses regions where Gaussians are spread too thick along normals
+      # ============================================================
+      
+      # COMPRESS_THICKNESS: Enable surface thickness compression
+      # - true: Compress overly thick surface regions
+      # - false: Skip thickness compression
+      # - Default: false
+      - COMPRESS_THICKNESS=true
+      
+      # THICKNESS_NEIGHBORS: Number of neighbors for thickness analysis
+      # - Lower values (8-12): Faster, local analysis
+      # - Higher values (20-30): More context for thickness measurement
+      # - Default: 15
+      - THICKNESS_NEIGHBORS=15
+      
+      # THICKNESS_MAX_FACTOR: Compress if thickness exceeds this factor of median scale
+      # - Lower values (1.5-2.0): Aggressive compression
+      # - Higher values (4.0-6.0): Only compress very thick regions
+      # - Default: 3.0
+      - THICKNESS_MAX_FACTOR=3.0
+      
+      # THICKNESS_STRENGTH: How much to compress thick regions (0.0-1.0)
+      # - Lower values (0.3-0.5): Gentle compression
+      # - Higher values (0.8-1.0): Strong compression toward median
+      # - Default: 0.7
+      - THICKNESS_STRENGTH=0.7
       
       # VERBOSE: Print detailed progress
       - VERBOSE=true

@@ -3,11 +3,21 @@ Gaussian Splat Enhancement Tool
 
 Improves Gaussian splat quality by:
 1. Detecting and removing floaters/outliers
-2. Identifying sparse regions (potential holes)
-3. Densifying sparse areas by cloning/interpolating Gaussians
+2. Plane detection and flattening (walls, floors, ceilings)
+3. Local depth consistency filtering (removes reflection artifacts)
+4. Surface thickness compression (condenses depth-spread splats)
+5. Identifying sparse regions (potential holes)
+6. Densifying sparse areas by cloning/interpolating Gaussians
+
+The plane-fitting algorithms (--flatten-planes, --depth-filter, --compress-thickness)
+are especially useful for indoor scenes where reflective surfaces cause Gaussians
+to be placed at incorrect depths (e.g., mirrors, windows, glossy walls).
 
 Usage:
     python splat_enhance.py input.ply output.ply [options]
+    
+    # For rooms with reflections:
+    python splat_enhance.py input.ply output.ply --flatten-planes --depth-filter
 """
 
 import argparse
@@ -16,6 +26,7 @@ import time
 from plyfile import PlyData, PlyElement
 from scipy.spatial import KDTree
 from scipy.ndimage import gaussian_filter, binary_dilation
+from collections import defaultdict
 
 
 def log_step(msg, indent=2):
@@ -595,12 +606,436 @@ def clone_and_split(splat, split_threshold_percentile=95, max_new=10000, verbose
     return splat, n_new
 
 
+def quaternion_to_rotation_matrix(q):
+    """
+    Convert quaternion (w, x, y, z) to 3x3 rotation matrix.
+    """
+    w, x, y, z = q
+    return np.array([
+        [1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
+        [2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w],
+        [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+    ])
+
+
+def get_gaussian_normals(splat):
+    """
+    Estimate surface normals from Gaussian orientations.
+    
+    The normal is the axis corresponding to the smallest scale (flattest direction).
+    
+    Returns:
+        normals: Nx3 array of unit normals
+    """
+    if splat.rotations is None or splat.scales is None:
+        return None
+    
+    n = len(splat)
+    normals = np.zeros((n, 3), dtype=np.float32)
+    scales_linear = splat.get_scales_linear()
+    
+    for i in range(n):
+        # Find the smallest scale axis (this is the "flat" direction / normal)
+        smallest_axis = np.argmin(scales_linear[i])
+        
+        # Get the rotation matrix
+        R = quaternion_to_rotation_matrix(splat.rotations[i])
+        
+        # The normal is the column of R corresponding to the smallest scale
+        normal = R[:, smallest_axis]
+        normals[i] = normal / (np.linalg.norm(normal) + 1e-8)
+    
+    return normals
+
+
+def ransac_fit_plane(points, n_iterations=100, distance_threshold=0.05, min_inliers_ratio=0.1):
+    """
+    Fit a plane to points using RANSAC.
+    
+    Args:
+        points: Nx3 array of points
+        n_iterations: Number of RANSAC iterations
+        distance_threshold: Max distance from plane to be considered inlier
+        min_inliers_ratio: Minimum ratio of inliers for a valid plane
+    
+    Returns:
+        best_plane: (normal, d) where plane equation is normal.dot(p) + d = 0
+        inlier_mask: Boolean mask of inlier points
+        None, None if no valid plane found
+    """
+    n_points = len(points)
+    if n_points < 3:
+        return None, None
+    
+    best_inliers = None
+    best_plane = None
+    best_count = 0
+    min_inliers = int(n_points * min_inliers_ratio)
+    
+    for _ in range(n_iterations):
+        # Sample 3 random points
+        indices = np.random.choice(n_points, 3, replace=False)
+        p1, p2, p3 = points[indices]
+        
+        # Compute plane normal
+        v1 = p2 - p1
+        v2 = p3 - p1
+        normal = np.cross(v1, v2)
+        norm = np.linalg.norm(normal)
+        
+        if norm < 1e-8:
+            continue
+        
+        normal = normal / norm
+        d = -np.dot(normal, p1)
+        
+        # Count inliers
+        distances = np.abs(np.dot(points, normal) + d)
+        inlier_mask = distances < distance_threshold
+        n_inliers = np.sum(inlier_mask)
+        
+        if n_inliers > best_count and n_inliers >= min_inliers:
+            best_count = n_inliers
+            best_plane = (normal, d)
+            best_inliers = inlier_mask
+    
+    return best_plane, best_inliers
+
+
+def detect_planes_ransac(splat, max_planes=10, distance_threshold=0.05, 
+                         min_inliers_ratio=0.05, n_iterations=200, verbose=True):
+    """
+    Detect multiple dominant planes in the scene using iterative RANSAC.
+    
+    Args:
+        splat: GaussianSplat object
+        max_planes: Maximum number of planes to detect
+        distance_threshold: Distance threshold for RANSAC inliers
+        min_inliers_ratio: Minimum ratio of remaining points to form a plane
+        n_iterations: RANSAC iterations per plane
+        verbose: Print progress
+    
+    Returns:
+        planes: List of (normal, d, inlier_indices) tuples
+    """
+    if verbose:
+        print("\n  " + "-" * 50)
+        print("  PLANE DETECTION (RANSAC)")
+        print("  " + "-" * 50)
+    
+    positions = splat.positions.copy()
+    n_total = len(positions)
+    
+    planes = []
+    remaining_mask = np.ones(n_total, dtype=bool)
+    remaining_indices = np.arange(n_total)
+    
+    for plane_idx in range(max_planes):
+        # Get remaining points
+        current_points = positions[remaining_mask]
+        current_indices = remaining_indices[remaining_mask]
+        
+        if len(current_points) < n_total * 0.01:  # Stop if less than 1% remain
+            break
+        
+        # Fit plane
+        plane, inlier_mask = ransac_fit_plane(
+            current_points, 
+            n_iterations=n_iterations,
+            distance_threshold=distance_threshold,
+            min_inliers_ratio=min_inliers_ratio
+        )
+        
+        if plane is None:
+            break
+        
+        # Get global indices of inliers
+        inlier_global_indices = current_indices[inlier_mask]
+        
+        if verbose:
+            normal, d = plane
+            print(f"    Plane {plane_idx + 1}: {len(inlier_global_indices):,} Gaussians")
+            print(f"      Normal: [{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]")
+        
+        planes.append((plane[0], plane[1], inlier_global_indices))
+        
+        # Remove inliers from remaining
+        remaining_mask[inlier_global_indices] = False
+    
+    if verbose:
+        total_assigned = sum(len(p[2]) for p in planes)
+        print(f"    Total planes detected: {len(planes)}")
+        print(f"    Gaussians assigned to planes: {total_assigned:,} ({100*total_assigned/n_total:.1f}%)")
+    
+    return planes
+
+
+def flatten_to_planes(splat, planes, max_distance=0.1, flatten_strength=0.8, verbose=True):
+    """
+    Flatten Gaussians to their nearest detected plane.
+    
+    Args:
+        splat: GaussianSplat object
+        planes: List of (normal, d, inlier_indices) from detect_planes_ransac
+        max_distance: Maximum distance to plane for flattening
+        flatten_strength: How much to flatten (0=none, 1=fully onto plane)
+        verbose: Print progress
+    
+    Returns:
+        Modified splat, number of flattened Gaussians
+    """
+    if verbose:
+        print("\n  " + "-" * 50)
+        print("  PLANE FLATTENING")
+        print("  " + "-" * 50)
+    
+    if len(planes) == 0:
+        if verbose:
+            print("    No planes detected - skipping flattening")
+        return splat, 0
+    
+    n_flattened = 0
+    
+    for plane_idx, (normal, d, inlier_indices) in enumerate(planes):
+        # For each Gaussian in this plane's inliers
+        for idx in inlier_indices:
+            pos = splat.positions[idx]
+            
+            # Compute signed distance to plane
+            dist = np.dot(normal, pos) + d
+            
+            if abs(dist) <= max_distance:
+                # Project onto plane (partial based on strength)
+                projection = pos - dist * normal * flatten_strength
+                splat.positions[idx] = projection
+                n_flattened += 1
+    
+    if verbose:
+        print(f"    Gaussians flattened: {n_flattened:,}")
+    
+    return splat, n_flattened
+
+
+def local_depth_consistency_filter(splat, k_neighbors=20, depth_std_threshold=2.0, 
+                                   flatten_outliers=True, verbose=True):
+    """
+    Identify and handle Gaussians that are depth outliers in their local neighborhood.
+    
+    This targets reflection artifacts where splats are placed at incorrect depths
+    but surrounded by splats at the correct surface depth.
+    
+    Args:
+        splat: GaussianSplat object
+        k_neighbors: Number of neighbors to analyze
+        depth_std_threshold: Flag as outlier if depth differs by more than this many local std devs
+        flatten_outliers: If True, project outliers to local median depth; if False, remove them
+        verbose: Print progress
+    
+    Returns:
+        Modified splat, number of affected Gaussians
+    """
+    if verbose:
+        print("\n  " + "-" * 50)
+        print("  LOCAL DEPTH CONSISTENCY FILTER")
+        print("  " + "-" * 50)
+    
+    n_original = len(splat)
+    
+    # First, estimate local surface normals
+    normals = get_gaussian_normals(splat)
+    
+    if normals is None:
+        if verbose:
+            print("    Cannot compute normals - skipping depth filter")
+        return splat, 0
+    
+    # Build KD-tree
+    tree = KDTree(splat.positions)
+    
+    outlier_mask = np.zeros(n_original, dtype=bool)
+    projected_positions = splat.positions.copy()
+    
+    for i in range(n_original):
+        # Find neighbors
+        distances, indices = tree.query(splat.positions[i], k=k_neighbors + 1)
+        neighbor_indices = indices[1:]  # Exclude self
+        
+        # Get positions relative to current point
+        neighbor_positions = splat.positions[neighbor_indices]
+        current_pos = splat.positions[i]
+        current_normal = normals[i]
+        
+        # Compute depth along the local normal direction
+        relative_positions = neighbor_positions - current_pos
+        depths = np.dot(relative_positions, current_normal)
+        
+        # Current point's depth is 0 (reference)
+        # Check if neighbors form a consistent surface
+        depth_median = np.median(depths)
+        depth_std = np.std(depths)
+        
+        if depth_std < 1e-6:
+            continue
+        
+        # The current point should be near the surface (depth ~0 relative to neighbors)
+        # If depth_median is significantly non-zero, neighbors are offset from us
+        # This means WE might be the outlier
+        
+        # Check if we're an outlier (far from the local surface)
+        # The local surface is approximately at -depth_median from us
+        our_depth_from_surface = -depth_median  # How far we are from neighbor median
+        
+        if abs(our_depth_from_surface) > depth_std_threshold * depth_std:
+            outlier_mask[i] = True
+            
+            if flatten_outliers:
+                # Project to local median surface
+                projected_positions[i] = current_pos + our_depth_from_surface * current_normal
+    
+    n_outliers = np.sum(outlier_mask)
+    
+    if verbose:
+        print(f"    Depth outliers found: {n_outliers:,}")
+    
+    if n_outliers == 0:
+        return splat, 0
+    
+    if flatten_outliers:
+        # Update positions to projected ones
+        splat.positions = projected_positions
+        if verbose:
+            print(f"    Outliers projected to local surface")
+    else:
+        # Remove outliers
+        keep_mask = ~outlier_mask
+        splat.positions = splat.positions[keep_mask]
+        if splat.opacity is not None:
+            splat.opacity = splat.opacity[keep_mask]
+        if splat.scales is not None:
+            splat.scales = splat.scales[keep_mask]
+        if splat.rotations is not None:
+            splat.rotations = splat.rotations[keep_mask]
+        if splat.colors_dc is not None:
+            splat.colors_dc = splat.colors_dc[keep_mask]
+        if splat.colors_rest is not None:
+            splat.colors_rest = splat.colors_rest[keep_mask]
+        if verbose:
+            print(f"    Outliers removed")
+    
+    return splat, n_outliers
+
+
+def compress_surface_thickness(splat, k_neighbors=15, max_thickness_factor=3.0, 
+                               compression_strength=0.7, verbose=True):
+    """
+    Compress regions where Gaussians are spread too thick along the surface normal.
+    
+    This helps condense reflection artifacts that create false depth.
+    
+    Args:
+        splat: GaussianSplat object
+        k_neighbors: Number of neighbors to analyze local thickness
+        max_thickness_factor: Compress if local thickness exceeds this factor of median scale
+        compression_strength: How much to compress (0=none, 1=fully to median)
+        verbose: Print progress
+    
+    Returns:
+        Modified splat, number of compressed regions
+    """
+    if verbose:
+        print("\n  " + "-" * 50)
+        print("  SURFACE THICKNESS COMPRESSION")
+        print("  " + "-" * 50)
+    
+    normals = get_gaussian_normals(splat)
+    
+    if normals is None:
+        if verbose:
+            print("    Cannot compute normals - skipping thickness compression")
+        return splat, 0
+    
+    n = len(splat)
+    scales_linear = splat.get_scales_linear()
+    median_scale = np.median(scales_linear)
+    
+    tree = KDTree(splat.positions)
+    
+    n_compressed = 0
+    new_positions = splat.positions.copy()
+    
+    # Process in chunks for efficiency
+    chunk_size = 1000
+    
+    for start_idx in range(0, n, chunk_size):
+        end_idx = min(start_idx + chunk_size, n)
+        
+        for i in range(start_idx, end_idx):
+            distances, indices = tree.query(splat.positions[i], k=k_neighbors + 1)
+            neighbor_indices = indices[1:]
+            
+            # Compute thickness along normal
+            current_normal = normals[i]
+            neighbor_positions = splat.positions[neighbor_indices]
+            
+            # Project neighbors onto normal axis
+            depths = np.dot(neighbor_positions - splat.positions[i], current_normal)
+            
+            # Measure thickness (range of depths)
+            thickness = np.max(depths) - np.min(depths)
+            
+            # Check if too thick
+            expected_thickness = median_scale * max_thickness_factor
+            
+            if thickness > expected_thickness:
+                # Compress toward median depth
+                median_depth = np.median(depths)
+                current_depth = 0  # We're at the reference point
+                
+                # Move toward median
+                adjustment = (median_depth - current_depth) * compression_strength
+                new_positions[i] = splat.positions[i] + adjustment * current_normal
+                n_compressed += 1
+    
+    splat.positions = new_positions
+    
+    if verbose:
+        print(f"    Gaussians with position adjusted: {n_compressed:,}")
+    
+    return splat, n_compressed
+
+
 def enhance_splat(input_path, output_path, 
                   remove_floaters_enabled=True,
                   densify_sparse_enabled=True,
                   split_large_enabled=True,
+                  # New plane-fitting options
+                  plane_detection_enabled=False,
+                  depth_consistency_enabled=False,
+                  thickness_compression_enabled=False,
                   grid_resolution=50,
                   density_threshold_percentile=10,
+                  # Floater removal parameters
+                  floater_std_threshold=3.0,
+                  floater_min_opacity=0.05,
+                  # Densification parameters
+                  densify_k_neighbors=5,
+                  densify_jitter=0.02,
+                  # Split parameters
+                  split_threshold_percentile=95,
+                  split_max_new=10000,
+                  # Plane detection parameters
+                  plane_max_planes=10,
+                  plane_distance_threshold=0.05,
+                  plane_min_inliers_ratio=0.05,
+                  plane_flatten_strength=0.8,
+                  # Depth consistency parameters
+                  depth_k_neighbors=20,
+                  depth_std_threshold=2.0,
+                  depth_flatten_outliers=True,
+                  # Thickness compression parameters
+                  thickness_k_neighbors=15,
+                  thickness_max_factor=3.0,
+                  thickness_compression_strength=0.7,
                   verbose=True):
     """
     Run full enhancement pipeline on a Gaussian splat.
@@ -611,8 +1046,27 @@ def enhance_splat(input_path, output_path,
         remove_floaters_enabled: Remove outlier Gaussians
         densify_sparse_enabled: Add Gaussians in sparse regions
         split_large_enabled: Split large Gaussians
+        plane_detection_enabled: Detect planes and flatten Gaussians to them
+        depth_consistency_enabled: Filter depth outliers in local neighborhoods
+        thickness_compression_enabled: Compress overly thick surface regions
         grid_resolution: Resolution for sparse detection grid
         density_threshold_percentile: What percentile is "sparse"
+        floater_std_threshold: Remove points beyond this many std devs from centroid
+        floater_min_opacity: Remove Gaussians with opacity below this threshold
+        densify_k_neighbors: Number of neighbors to interpolate from when densifying
+        densify_jitter: Random offset factor for new Gaussians (relative to local scale)
+        split_threshold_percentile: Split Gaussians above this percentile in scale
+        split_max_new: Maximum number of new Gaussians to add from splitting
+        plane_max_planes: Maximum number of planes to detect
+        plane_distance_threshold: RANSAC distance threshold for plane inliers
+        plane_min_inliers_ratio: Minimum ratio of points to form a valid plane
+        plane_flatten_strength: How much to flatten (0=none, 1=fully onto plane)
+        depth_k_neighbors: Number of neighbors for depth consistency analysis
+        depth_std_threshold: Std devs from local surface to be considered outlier
+        depth_flatten_outliers: If True, project outliers; if False, remove them
+        thickness_k_neighbors: Number of neighbors for thickness analysis
+        thickness_max_factor: Compress if thickness exceeds this factor of median scale
+        thickness_compression_strength: How much to compress thick regions
         verbose: Print progress
     
     Returns:
@@ -631,16 +1085,67 @@ def enhance_splat(input_path, output_path,
     stats = {
         'original_count': n_original,
         'floaters_removed': 0,
+        'planes_detected': 0,
+        'plane_flattened': 0,
+        'depth_outliers': 0,
+        'thickness_compressed': 0,
         'sparse_added': 0,
         'split_added': 0,
     }
     
     # Step 1: Remove floaters
     if remove_floaters_enabled:
-        splat, n_removed = remove_floaters(splat, verbose=verbose)
+        splat, n_removed = remove_floaters(
+            splat, 
+            std_threshold=floater_std_threshold,
+            min_opacity=floater_min_opacity,
+            verbose=verbose
+        )
         stats['floaters_removed'] = n_removed
     
-    # Step 2: Find and fill sparse regions
+    # Step 2: Plane detection and flattening (for walls, floors, etc.)
+    if plane_detection_enabled:
+        planes = detect_planes_ransac(
+            splat,
+            max_planes=plane_max_planes,
+            distance_threshold=plane_distance_threshold,
+            min_inliers_ratio=plane_min_inliers_ratio,
+            verbose=verbose
+        )
+        stats['planes_detected'] = len(planes)
+        
+        splat, n_flattened = flatten_to_planes(
+            splat,
+            planes,
+            max_distance=plane_distance_threshold * 2,
+            flatten_strength=plane_flatten_strength,
+            verbose=verbose
+        )
+        stats['plane_flattened'] = n_flattened
+    
+    # Step 3: Local depth consistency filter (removes/flattens reflection artifacts)
+    if depth_consistency_enabled:
+        splat, n_depth = local_depth_consistency_filter(
+            splat,
+            k_neighbors=depth_k_neighbors,
+            depth_std_threshold=depth_std_threshold,
+            flatten_outliers=depth_flatten_outliers,
+            verbose=verbose
+        )
+        stats['depth_outliers'] = n_depth
+    
+    # Step 4: Surface thickness compression
+    if thickness_compression_enabled:
+        splat, n_thickness = compress_surface_thickness(
+            splat,
+            k_neighbors=thickness_k_neighbors,
+            max_thickness_factor=thickness_max_factor,
+            compression_strength=thickness_compression_strength,
+            verbose=verbose
+        )
+        stats['thickness_compressed'] = n_thickness
+    
+    # Step 5: Find and fill sparse regions
     if densify_sparse_enabled:
         sparse_centers, _ = find_sparse_regions(
             splat, 
@@ -648,12 +1153,23 @@ def enhance_splat(input_path, output_path,
             density_threshold_percentile=density_threshold_percentile,
             verbose=verbose
         )
-        splat, n_added = densify_sparse_regions(splat, sparse_centers, verbose=verbose)
+        splat, n_added = densify_sparse_regions(
+            splat, 
+            sparse_centers, 
+            k_neighbors=densify_k_neighbors,
+            jitter=densify_jitter,
+            verbose=verbose
+        )
         stats['sparse_added'] = n_added
     
-    # Step 3: Split large Gaussians
+    # Step 6: Split large Gaussians
     if split_large_enabled:
-        splat, n_split = clone_and_split(splat, verbose=verbose)
+        splat, n_split = clone_and_split(
+            splat, 
+            split_threshold_percentile=split_threshold_percentile,
+            max_new=split_max_new,
+            verbose=verbose
+        )
         stats['split_added'] = n_split
     
     # Save result
@@ -671,6 +1187,13 @@ def enhance_splat(input_path, output_path,
     print("=" * 60)
     print(f"  Original Gaussians:    {stats['original_count']:,}")
     print(f"  Floaters removed:      {stats['floaters_removed']:,}")
+    if plane_detection_enabled:
+        print(f"  Planes detected:       {stats['planes_detected']}")
+        print(f"  Flattened to planes:   {stats['plane_flattened']:,}")
+    if depth_consistency_enabled:
+        print(f"  Depth outliers fixed:  {stats['depth_outliers']:,}")
+    if thickness_compression_enabled:
+        print(f"  Thickness compressed:  {stats['thickness_compressed']:,}")
     print(f"  Sparse region fills:   {stats['sparse_added']:,}")
     print(f"  Large Gaussian splits: {stats['split_added']:,}")
     print(f"  Final Gaussians:       {stats['final_count']:,}")
@@ -697,6 +1220,15 @@ Examples:
     
     # Fine grid for detailed models
     python splat_enhance.py input.ply output.ply --grid 100
+    
+    # Room/indoor scene with reflections - flatten to walls
+    python splat_enhance.py input.ply output.ply --flatten-planes --depth-filter
+    
+    # Aggressive reflection artifact removal
+    python splat_enhance.py input.ply output.ply --flatten-planes --depth-filter --compress-thickness
+    
+    # Fine-tune plane detection for large rooms
+    python splat_enhance.py input.ply output.ply --flatten-planes --plane-max 20 --plane-distance 0.1
         """
     )
     
@@ -710,10 +1242,62 @@ Examples:
     parser.add_argument("--no-split", action="store_true",
                         help="Skip large Gaussian splitting")
     
+    # Plane fitting options (for flattening walls/surfaces)
+    parser.add_argument("--flatten-planes", action="store_true",
+                        help="Enable plane detection and flattening (good for rooms/walls)")
+    parser.add_argument("--depth-filter", action="store_true",
+                        help="Enable local depth consistency filtering (removes reflection artifacts)")
+    parser.add_argument("--compress-thickness", action="store_true",
+                        help="Compress overly thick surface regions")
+    
     parser.add_argument("--grid", type=int, default=50,
                         help="Grid resolution for sparse detection (default: 50)")
     parser.add_argument("--density-threshold", type=int, default=10,
                         help="Percentile for sparse threshold (default: 10)")
+    
+    # Floater removal parameters
+    parser.add_argument("--floater-std", type=float, default=3.0,
+                        help="Std dev threshold for position outliers (default: 3.0)")
+    parser.add_argument("--floater-min-opacity", type=float, default=0.05,
+                        help="Minimum opacity threshold (default: 0.05)")
+    
+    # Densification parameters
+    parser.add_argument("--densify-neighbors", type=int, default=5,
+                        help="Number of neighbors to interpolate from (default: 5)")
+    parser.add_argument("--densify-jitter", type=float, default=0.02,
+                        help="Random offset factor for new Gaussians (default: 0.02)")
+    
+    # Split parameters
+    parser.add_argument("--split-percentile", type=int, default=95,
+                        help="Split Gaussians above this percentile in scale (default: 95)")
+    parser.add_argument("--split-max-new", type=int, default=10000,
+                        help="Maximum new Gaussians from splitting (default: 10000)")
+    
+    # Plane detection parameters
+    parser.add_argument("--plane-max", type=int, default=10,
+                        help="Maximum number of planes to detect (default: 10)")
+    parser.add_argument("--plane-distance", type=float, default=0.05,
+                        help="RANSAC distance threshold for plane inliers (default: 0.05)")
+    parser.add_argument("--plane-min-ratio", type=float, default=0.05,
+                        help="Minimum ratio of points to form a plane (default: 0.05)")
+    parser.add_argument("--plane-flatten-strength", type=float, default=0.8,
+                        help="How strongly to flatten to planes, 0-1 (default: 0.8)")
+    
+    # Depth consistency parameters  
+    parser.add_argument("--depth-neighbors", type=int, default=20,
+                        help="Number of neighbors for depth analysis (default: 20)")
+    parser.add_argument("--depth-std", type=float, default=2.0,
+                        help="Std devs threshold for depth outliers (default: 2.0)")
+    parser.add_argument("--depth-remove", action="store_true",
+                        help="Remove depth outliers instead of projecting them")
+    
+    # Thickness compression parameters
+    parser.add_argument("--thickness-neighbors", type=int, default=15,
+                        help="Number of neighbors for thickness analysis (default: 15)")
+    parser.add_argument("--thickness-factor", type=float, default=3.0,
+                        help="Compress if thickness exceeds this factor of median scale (default: 3.0)")
+    parser.add_argument("--thickness-strength", type=float, default=0.7,
+                        help="Compression strength, 0-1 (default: 0.7)")
     
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress output")
@@ -726,8 +1310,27 @@ Examples:
         remove_floaters_enabled=not args.no_floaters,
         densify_sparse_enabled=not args.no_densify,
         split_large_enabled=not args.no_split,
+        plane_detection_enabled=args.flatten_planes,
+        depth_consistency_enabled=args.depth_filter,
+        thickness_compression_enabled=args.compress_thickness,
         grid_resolution=args.grid,
         density_threshold_percentile=args.density_threshold,
+        floater_std_threshold=args.floater_std,
+        floater_min_opacity=args.floater_min_opacity,
+        densify_k_neighbors=args.densify_neighbors,
+        densify_jitter=args.densify_jitter,
+        split_threshold_percentile=args.split_percentile,
+        split_max_new=args.split_max_new,
+        plane_max_planes=args.plane_max,
+        plane_distance_threshold=args.plane_distance,
+        plane_min_inliers_ratio=args.plane_min_ratio,
+        plane_flatten_strength=args.plane_flatten_strength,
+        depth_k_neighbors=args.depth_neighbors,
+        depth_std_threshold=args.depth_std,
+        depth_flatten_outliers=not args.depth_remove,
+        thickness_k_neighbors=args.thickness_neighbors,
+        thickness_max_factor=args.thickness_factor,
+        thickness_compression_strength=args.thickness_strength,
         verbose=not args.quiet
     )
 

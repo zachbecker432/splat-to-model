@@ -36,6 +36,37 @@ Environment Variables:
     GRID_RESOLUTION     - Grid resolution for sparse detection (default: 50)
     DENSITY_THRESHOLD   - Percentile for sparse threshold (default: 10)
     
+    # Floater removal parameters:
+    FLOATER_STD_THRESHOLD   - Std dev threshold for position outliers (default: 3.0)
+    FLOATER_MIN_OPACITY     - Minimum opacity threshold (default: 0.05)
+    
+    # Densification parameters:
+    DENSIFY_K_NEIGHBORS     - Number of neighbors to interpolate from (default: 5)
+    DENSIFY_JITTER          - Random offset factor for new Gaussians (default: 0.02)
+    
+    # Split parameters:
+    SPLIT_THRESHOLD_PERCENTILE - Split Gaussians above this percentile (default: 95)
+    SPLIT_MAX_NEW              - Maximum new Gaussians from splitting (default: 10000)
+    
+    # Plane detection & flattening (for walls/floors/ceilings):
+    FLATTEN_PLANES          - Enable plane detection and flattening (default: false)
+    PLANE_MAX               - Maximum planes to detect (default: 10)
+    PLANE_DISTANCE          - Distance threshold for plane inliers (default: 0.05)
+    PLANE_MIN_RATIO         - Minimum ratio of points for valid plane (default: 0.05)
+    PLANE_FLATTEN_STRENGTH  - How strongly to flatten to planes (default: 0.8)
+    
+    # Depth consistency filter (removes reflection artifacts):
+    DEPTH_FILTER            - Enable depth consistency filtering (default: false)
+    DEPTH_NEIGHBORS         - Number of neighbors for depth analysis (default: 20)
+    DEPTH_STD_THRESHOLD     - Std devs from surface to be outlier (default: 2.0)
+    DEPTH_REMOVE_OUTLIERS   - Remove outliers instead of projecting (default: false)
+    
+    # Surface thickness compression:
+    COMPRESS_THICKNESS      - Enable thickness compression (default: false)
+    THICKNESS_NEIGHBORS     - Number of neighbors for analysis (default: 15)
+    THICKNESS_MAX_FACTOR    - Max thickness factor before compression (default: 3.0)
+    THICKNESS_STRENGTH      - Compression strength (default: 0.7)
+    
     VERBOSE             - Print progress (default: true)
 """
 
@@ -314,6 +345,38 @@ def run_enhance_pipeline():
     split_large = get_env_bool('SPLIT_LARGE', True)
     grid_resolution = get_env_int('GRID_RESOLUTION', 50)
     density_threshold = get_env_int('DENSITY_THRESHOLD', 10)
+    
+    # Floater removal parameters
+    floater_std_threshold = get_env_float('FLOATER_STD_THRESHOLD', 3.0)
+    floater_min_opacity = get_env_float('FLOATER_MIN_OPACITY', 0.05)
+    
+    # Densification parameters
+    densify_k_neighbors = get_env_int('DENSIFY_K_NEIGHBORS', 5)
+    densify_jitter = get_env_float('DENSIFY_JITTER', 0.02)
+    
+    # Split parameters
+    split_threshold_percentile = get_env_int('SPLIT_THRESHOLD_PERCENTILE', 95)
+    split_max_new = get_env_int('SPLIT_MAX_NEW', 10000)
+    
+    # Plane detection & flattening parameters
+    flatten_planes = get_env_bool('FLATTEN_PLANES', False)
+    plane_max = get_env_int('PLANE_MAX', 10)
+    plane_distance = get_env_float('PLANE_DISTANCE', 0.05)
+    plane_min_ratio = get_env_float('PLANE_MIN_RATIO', 0.05)
+    plane_flatten_strength = get_env_float('PLANE_FLATTEN_STRENGTH', 0.8)
+    
+    # Depth consistency filter parameters
+    depth_filter = get_env_bool('DEPTH_FILTER', False)
+    depth_neighbors = get_env_int('DEPTH_NEIGHBORS', 20)
+    depth_std_threshold = get_env_float('DEPTH_STD_THRESHOLD', 2.0)
+    depth_remove_outliers = get_env_bool('DEPTH_REMOVE_OUTLIERS', False)
+    
+    # Thickness compression parameters
+    compress_thickness = get_env_bool('COMPRESS_THICKNESS', False)
+    thickness_neighbors = get_env_int('THICKNESS_NEIGHBORS', 15)
+    thickness_max_factor = get_env_float('THICKNESS_MAX_FACTOR', 3.0)
+    thickness_strength = get_env_float('THICKNESS_STRENGTH', 0.7)
+    
     verbose = get_env_bool('VERBOSE', True)
     
     # Setup paths
@@ -337,11 +400,36 @@ def run_enhance_pipeline():
         print(f"    Output file: {output_path}")
         print()
         print("  CONFIGURATION:")
-        print(f"    REMOVE_FLOATERS:    {remove_floaters}")
-        print(f"    DENSIFY_SPARSE:     {densify_sparse}")
-        print(f"    SPLIT_LARGE:        {split_large}")
-        print(f"    GRID_RESOLUTION:    {grid_resolution}")
-        print(f"    DENSITY_THRESHOLD:  {density_threshold}")
+        print(f"    REMOVE_FLOATERS:           {remove_floaters}")
+        print(f"    DENSIFY_SPARSE:            {densify_sparse}")
+        print(f"    SPLIT_LARGE:               {split_large}")
+        print(f"    FLATTEN_PLANES:            {flatten_planes}")
+        print(f"    DEPTH_FILTER:              {depth_filter}")
+        print(f"    COMPRESS_THICKNESS:        {compress_thickness}")
+        print(f"    GRID_RESOLUTION:           {grid_resolution}")
+        print(f"    DENSITY_THRESHOLD:         {density_threshold}")
+        if remove_floaters:
+            print(f"    FLOATER_STD_THRESHOLD:     {floater_std_threshold}")
+            print(f"    FLOATER_MIN_OPACITY:       {floater_min_opacity}")
+        if densify_sparse:
+            print(f"    DENSIFY_K_NEIGHBORS:       {densify_k_neighbors}")
+            print(f"    DENSIFY_JITTER:            {densify_jitter}")
+        if split_large:
+            print(f"    SPLIT_THRESHOLD_PERCENTILE: {split_threshold_percentile}")
+            print(f"    SPLIT_MAX_NEW:             {split_max_new}")
+        if flatten_planes:
+            print(f"    PLANE_MAX:                 {plane_max}")
+            print(f"    PLANE_DISTANCE:            {plane_distance}")
+            print(f"    PLANE_MIN_RATIO:           {plane_min_ratio}")
+            print(f"    PLANE_FLATTEN_STRENGTH:    {plane_flatten_strength}")
+        if depth_filter:
+            print(f"    DEPTH_NEIGHBORS:           {depth_neighbors}")
+            print(f"    DEPTH_STD_THRESHOLD:       {depth_std_threshold}")
+            print(f"    DEPTH_REMOVE_OUTLIERS:     {depth_remove_outliers}")
+        if compress_thickness:
+            print(f"    THICKNESS_NEIGHBORS:       {thickness_neighbors}")
+            print(f"    THICKNESS_MAX_FACTOR:      {thickness_max_factor}")
+            print(f"    THICKNESS_STRENGTH:        {thickness_strength}")
         print("=" * 70)
         print()
     
@@ -353,8 +441,27 @@ def run_enhance_pipeline():
             remove_floaters_enabled=remove_floaters,
             densify_sparse_enabled=densify_sparse,
             split_large_enabled=split_large,
+            plane_detection_enabled=flatten_planes,
+            depth_consistency_enabled=depth_filter,
+            thickness_compression_enabled=compress_thickness,
             grid_resolution=grid_resolution,
             density_threshold_percentile=density_threshold,
+            floater_std_threshold=floater_std_threshold,
+            floater_min_opacity=floater_min_opacity,
+            densify_k_neighbors=densify_k_neighbors,
+            densify_jitter=densify_jitter,
+            split_threshold_percentile=split_threshold_percentile,
+            split_max_new=split_max_new,
+            plane_max_planes=plane_max,
+            plane_distance_threshold=plane_distance,
+            plane_min_inliers_ratio=plane_min_ratio,
+            plane_flatten_strength=plane_flatten_strength,
+            depth_k_neighbors=depth_neighbors,
+            depth_std_threshold=depth_std_threshold,
+            depth_flatten_outliers=not depth_remove_outliers,
+            thickness_k_neighbors=thickness_neighbors,
+            thickness_max_factor=thickness_max_factor,
+            thickness_compression_strength=thickness_strength,
             verbose=verbose
         )
         
@@ -370,6 +477,13 @@ def run_enhance_pipeline():
             print()
             print(f"  CHANGES:")
             print(f"    Floaters removed:      {stats.get('floaters_removed', 0):,}")
+            if flatten_planes:
+                print(f"    Planes detected:       {stats.get('planes_detected', 0)}")
+                print(f"    Flattened to planes:   {stats.get('plane_flattened', 0):,}")
+            if depth_filter:
+                print(f"    Depth outliers fixed:  {stats.get('depth_outliers', 0):,}")
+            if compress_thickness:
+                print(f"    Thickness compressed:  {stats.get('thickness_compressed', 0):,}")
             print(f"    Sparse regions filled: {stats.get('sparse_added', 0):,}")
             print(f"    Large Gaussians split: {stats.get('split_added', 0):,}")
             print()
