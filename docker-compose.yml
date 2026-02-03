@@ -327,7 +327,7 @@ services:
       # - true: Detect dominant planes and project nearby Gaussians onto them
       # - false: Skip plane detection
       # - Default: false
-      - FLATTEN_PLANES=true
+      - FLATTEN_PLANES=false
       
       # PLANE_MAX: Maximum number of planes to detect
       # - Lower values (5-8): Detect only the most dominant planes
@@ -362,7 +362,7 @@ services:
       # - true: Find and fix depth outliers (e.g., from reflections)
       # - false: Skip depth filtering
       # - Default: false
-      - DEPTH_FILTER=true
+      - DEPTH_FILTER=false
       
       # DEPTH_NEIGHBORS: Number of neighbors to analyze for depth consistency
       # - Lower values (10-15): Faster, but may miss some outliers
@@ -391,7 +391,7 @@ services:
       # - true: Compress overly thick surface regions
       # - false: Skip thickness compression
       # - Default: false
-      - COMPRESS_THICKNESS=true
+      - COMPRESS_THICKNESS=false
       
       # THICKNESS_NEIGHBORS: Number of neighbors for thickness analysis
       # - Lower values (8-12): Faster, local analysis

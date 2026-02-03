@@ -40,6 +40,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY splat_to_pointcloud.py .
 COPY pointcloud_to_mesh.py .
 COPY run_pipeline.py .
+COPY splat_enhance.py .
+COPY splat_analyze.py .
 
 # Create data directory
 RUN mkdir -p /data
